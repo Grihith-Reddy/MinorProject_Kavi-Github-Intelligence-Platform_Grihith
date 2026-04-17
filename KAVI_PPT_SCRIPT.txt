@@ -1,0 +1,236 @@
+﻿KAVI PPT SCRIPT
+Project Title: KAVI - GitHub Intelligence Platform
+Tagline: KAVI remembers why your code exists.
+
+====================================================================
+1) OBJECTIVE
+====================================================================
+Slide Content:
+- Build a developer intelligence platform that preserves the "why" behind code changes.
+- Convert pull request discussions into structured, searchable engineering knowledge.
+- Enable grounded repository chat for faster onboarding, debugging, and decision recall.
+- Reduce context loss and repeated explanation effort in software teams.
+
+Presenter Script:
+"The main objective of KAVI is to solve context rot in software projects. Teams often remember what changed in code, but lose why it changed. KAVI ingests pull request data, extracts engineering intent, stores it as knowledge, and provides a chat interface so developers can ask project-specific questions with file and PR grounding."
+
+====================================================================
+2) INTRODUCTION
+====================================================================
+Slide Content:
+- Problem: Engineering intent is scattered across PR descriptions, comments, reviews, and commits.
+- Existing pain points:
+  - New developers struggle to understand historical decisions.
+  - Teams repeatedly answer the same architecture questions.
+  - PR context is hard to retrieve at the right time.
+- Solution: KAVI unifies PR context into a repository-scoped knowledge base + chat assistant.
+
+Presenter Script:
+"In most teams, important decisions are buried in GitHub pull requests. Over time, this becomes hard to search and reuse. KAVI addresses this by treating pull requests as the core unit of intent. It extracts context once, stores it in a structured way, and lets developers retrieve it through APIs and chat."
+
+====================================================================
+3) LITERATURE SURVEY
+====================================================================
+Slide Content:
+A) Software Repository Mining
+- Prior work mines commits/issues/PRs to understand development behavior and evolution.
+- Focus is often analytics, not day-to-day developer retrieval.
+
+B) Code Summarization and LLM Assistance
+- LLMs can summarize code changes and generate explanations.
+- Main risk: hallucination when responses are not grounded in repository evidence.
+
+C) Retrieval-Augmented Generation (RAG)
+- RAG improves reliability by injecting retrieved context into model prompts.
+- Works well when retrieval quality and data freshness are strong.
+
+D) Developer Knowledge Management Tools
+- Documentation systems capture design intent, but adoption and maintenance are inconsistent.
+- PR discussion remains an underutilized source of practical engineering rationale.
+
+Presenter Script:
+"The literature shows strong progress in repository mining, code summarization, and RAG. But there is still a practical gap between research and developer workflow: teams need a lightweight way to preserve and query PR intent in daily work. KAVI combines these ideas in a production-oriented pipeline for real repositories."
+
+====================================================================
+4) EXPECTED GAP IN LITERATURE SURVEY
+====================================================================
+Slide Content:
+- Gap 1: Limited systems that transform PR discussions into continuously queryable repository memory.
+- Gap 2: Many AI assistants are generic and not deeply grounded in repo-specific evidence.
+- Gap 3: Existing tools often emphasize code snapshots, not decision intent and trade-offs.
+- Gap 4: Access control and repo-level isolation are not always first-class in research prototypes.
+
+Presenter Script:
+"The expected gap is clear: we need a practical, secure, repository-scoped system that remembers intent and answers context questions with evidence. KAVI directly targets this gap by combining ingestion, AI summarization, structured storage, retrieval, and grounded chat."
+
+====================================================================
+5) METHODOLOGY
+====================================================================
+Slide Content:
+Step 1 - Authentication and Access
+- Frontend login via Firebase.
+- Backend verifies token and maps user identity.
+
+Step 2 - GitHub Connection
+- OAuth flow to connect GitHub account.
+- Access token encrypted at rest.
+
+Step 3 - Repository Sync and Ingestion
+- Fetch pull requests, commits, comments, reviews, and changed files.
+- AI summarizes each PR intent and key decisions.
+- Store knowledge entries + file mappings in PostgreSQL.
+
+Step 4 - Knowledge Retrieval
+- Query knowledge entries via API (entries, files, timeline, file detail).
+- Repository-scoped access checks for security.
+
+Step 5 - Grounded Chat
+- Retrieve relevant PR knowledge and file references.
+- Support repo overview mode for high-level understanding.
+- For file-specific queries, fetch live file snippets (where available) to improve code-level answers.
+
+Step 6 - Frontend Experience
+- Dashboard with repository status, chat interface, and knowledge views.
+- Chat response typing animation and guided auto-scroll for readability.
+
+Presenter Script:
+"Our methodology starts with secure authentication and GitHub integration. Then KAVI ingests PR data, generates structured intent summaries, and stores everything in a searchable schema. At query time, the system retrieves repository evidence and sends grounded context to the assistant for reliable answers."
+
+====================================================================
+6) HARDWARE AND SOFTWARE REQUIREMENT
+====================================================================
+Slide Content:
+Hardware (Development/Testing):
+- CPU: Intel i5 / Ryzen 5 or higher
+- RAM: 8 GB minimum, 16 GB recommended
+- Storage: 10+ GB free disk space
+- Internet: Required for GitHub OAuth and Gemini API calls
+
+Software Stack:
+- OS: Windows / Linux / macOS
+- Frontend: React + Vite + TypeScript
+- Backend: FastAPI (Python)
+- Database: PostgreSQL 14+
+- AI Model: Gemini 2.5 Flash
+- Auth: Firebase Authentication + Firebase Admin SDK
+- Version Control Source: GitHub APIs
+
+Presenter Script:
+"KAVI is designed to run locally as well as in cloud deployments. The stack uses React and FastAPI with PostgreSQL for structured persistence. Gemini is used for summarization and chat reasoning with grounded repository context."
+
+====================================================================
+7) DFD / ER / FLOWCHART OF PROJECT
+====================================================================
+Slide Content:
+A) DFD (Level 0 - Context)
+External Entities:
+- User
+- GitHub API
+- Gemini API
+- PostgreSQL
+
+Main Process:
+- KAVI Platform
+
+Data Flows:
+- User -> KAVI: login, connect GitHub, sync request, chat query
+- KAVI -> GitHub: repository and PR data fetch
+- KAVI -> Gemini: summarization/chat prompt with retrieved context
+- KAVI <-> PostgreSQL: store/retrieve users, repos, PRs, knowledge, file mappings
+- KAVI -> User: grounded answers, entries, file-level references
+
+B) ER Diagram (Core Tables)
+- users (1) -> (1) github_accounts
+- github_accounts (M) -> (M) repositories through repository_access
+- repositories (1) -> (M) pull_requests
+- pull_requests (1) -> (M) commits
+- pull_requests (1) -> (1) knowledge_entries
+- knowledge_entries (1) -> (M) file_mappings
+- repositories (1) -> (M) sync_jobs
+
+C) Flowchart (Operational)
+1. User logs in
+2. Connect GitHub account
+3. Select repository
+4. Trigger sync
+5. Ingest PR metadata and discussions
+6. Generate AI summary per PR
+7. Store knowledge + file mappings
+8. User asks chat question
+9. Retrieve relevant context
+10. Generate grounded response
+11. Display answer with references
+
+Presenter Script:
+"This architecture ensures a clear flow from source data to user-facing intelligence. The ER model keeps relationships explicit, while the DFD shows how KAVI orchestrates external APIs and internal persistence."
+
+====================================================================
+8) EXPECTED OUTPUT
+====================================================================
+Slide Content:
+Functional Outputs:
+- Connected GitHub repositories with sync status.
+- Indexed PR knowledge entries (summary, intent, decisions, risks, tags).
+- File-to-PR traceability using file mappings and line ranges.
+- Repository chat that answers with grounded context and references.
+- Repo overview responses for high-level architecture and evolution insights.
+
+User Outcomes:
+- Faster onboarding for new contributors.
+- Quicker debugging and feature reasoning.
+- Better continuity of architectural decisions across team members.
+
+Presenter Script:
+"The expected output is not only a working software product but a practical productivity gain: less time searching old PRs, fewer repeated discussions, and faster decision recall across the team."
+
+====================================================================
+9) CONCLUSION
+====================================================================
+Slide Content:
+- KAVI turns fragmented PR discussions into persistent engineering memory.
+- The system is repository-aware, access-controlled, and workflow-aligned.
+- It combines ingestion, summarization, structured storage, and grounded chat.
+- Current implementation already supports end-to-end sync, knowledge APIs, and context-driven Q and A.
+
+Presenter Script:
+"To conclude, KAVI demonstrates how PR-centric knowledge engineering can improve developer experience. It keeps intent connected to real repository evolution and exposes that context through a usable chat interface."
+
+====================================================================
+10) FUTURE WORK
+====================================================================
+Slide Content:
+- Add conversational memory across turns per user session (without UI clutter).
+- Add code artifact/canvas panel for generated code previews.
+- Improve ranking with hybrid retrieval (full-text + semantic vectors).
+- Add IDE extension for in-editor context assistance.
+- Add analytics: response quality, context coverage, and sync freshness.
+- Enterprise features: org-level policies, audit dashboards, role-based controls.
+
+Presenter Script:
+"Future work focuses on making KAVI more assistant-like and proactive, including hidden conversational memory, richer code generation UX, hybrid retrieval, and deeper IDE integration."
+
+====================================================================
+11) REFERENCE
+====================================================================
+Slide Content:
+Project Documents:
+1. KAVI README and architecture docs (local repository).
+2. KAVI API contracts and workflow documentation.
+3. KAVI database schema and migration scripts.
+
+Technical References:
+4. FastAPI Documentation - https://fastapi.tiangolo.com/
+5. PostgreSQL Documentation - https://www.postgresql.org/docs/
+6. Firebase Authentication Docs - https://firebase.google.com/docs/auth
+7. GitHub REST API Docs - https://docs.github.com/en/rest
+8. Gemini API Documentation - https://ai.google.dev/
+
+Presenter Script:
+"These references include both our implementation documents and core platform technologies that support the project architecture and methodology."
+
+====================================================================
+OPTIONAL FINAL SLIDE (THANK YOU)
+====================================================================
+- Thank You
+- Questions and Discussion
+- Demo: Repository sync + grounded chat query
