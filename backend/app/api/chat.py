@@ -137,22 +137,25 @@ def _resolve_mode(query: str, mode: str | None) -> str:
 def _extract_search_terms(query: str, limit: int = 10) -> list[str]:
     seen: set[str] = set()
     terms: list[str] = []
-    lowered = str(query or "").lower()
+    text_value = str(query or "")
 
-    for raw_token in _QUERY_TOKEN_RE.findall(lowered):
+    for raw_token in _QUERY_TOKEN_RE.findall(text_value):
         token = raw_token.strip("`'\"()[]{}<>,:;!?").replace("\\", "/").strip("/")
         if not token:
             continue
 
-        token_parts = [token]
+        lowered_token = token.lower()
+        token_parts = [lowered_token]
         token_parts.extend(part for part in re.split(r"[._/-]+", token) if part)
+        # Split CamelCase/PascalCase tokens so class/function names are searchable.
+        token_parts.extend(part.lower() for part in re.findall(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[0-9]+", raw_token))
         if "/" in token:
-            token_parts.append(token.split("/")[-1])
+            token_parts.append(token.split("/")[-1].lower())
         if "." in token:
-            token_parts.append(token.split(".")[0])
+            token_parts.append(token.split(".")[0].lower())
 
         for part in token_parts:
-            normalized = str(part).strip().strip("-_")
+            normalized = str(part).strip().strip("-_").lower()
             if len(normalized) < 3:
                 continue
             if normalized in _QUERY_STOP_WORDS:
@@ -167,11 +170,60 @@ def _extract_search_terms(query: str, limit: int = 10) -> list[str]:
     return terms
 
 
+def _extract_symbol_hints(query: str, limit: int = 8) -> list[str]:
+    text_value = str(query or "")
+    hints: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: str) -> None:
+        normalized = str(value or "").strip().strip("`'\"").strip("_-").lower()
+        if len(normalized) < 3:
+            return
+        if normalized in _QUERY_STOP_WORDS:
+            return
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        hints.append(normalized)
+
+    for match in re.finditer(r"`([^`]{2,120})`", text_value):
+        candidate = match.group(1)
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", candidate):
+            _add(token)
+
+    # Capture symbols near "class/method/function" mentions.
+    for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]{2,})\s+(?:class|method|function)\b", text_value, re.IGNORECASE):
+        _add(match.group(1))
+
+    # Capture CamelCase / PascalCase identifiers directly.
+    for token in re.findall(r"\b[A-Z][A-Za-z0-9_]{2,}\b", text_value):
+        _add(token)
+
+    return hints[:limit]
+
+
 def _has_file_path_signal(query: str) -> bool:
     text_value = str(query or "")
     if "/" in text_value or "\\" in text_value:
         return True
     return bool(re.search(r"\b[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]{1,8}\b", text_value))
+
+
+def _has_code_preview_signal(query: str) -> bool:
+    lowered = str(query or "").lower()
+    signals = (
+        "show code",
+        "code snippet",
+        "implementation",
+        "function",
+        "method",
+        "class",
+        "generate code",
+        "write code",
+        "new function",
+        "new file",
+    )
+    return any(signal in lowered for signal in signals)
 
 
 def _is_text_file_path(file_path: str) -> bool:
@@ -192,6 +244,7 @@ def _find_candidate_file_paths(
     db: Session,
     repo_id: str,
     query_terms: list[str],
+    symbol_hints: list[str] | None = None,
     limit: int = 4,
 ) -> list[str]:
     if not query_terms:
@@ -222,6 +275,7 @@ def _find_candidate_file_paths(
         params,
     ).mappings().all()
 
+    symbol_hints = [str(item or "").lower() for item in (symbol_hints or []) if str(item or "").strip()]
     scored: list[tuple[int, int, str]] = []
     lowered_terms = [term.lower() for term in query_terms]
     for row in rows:
@@ -230,20 +284,97 @@ def _find_candidate_file_paths(
             continue
         lowered_path = file_path.lower()
         base_name = lowered_path.split("/")[-1]
+        base_stem = base_name.rsplit(".", 1)[0] if "." in base_name else base_name
         score = 0
+        for symbol in symbol_hints:
+            if symbol == base_stem:
+                score += 220
+            elif symbol == base_name:
+                score += 200
+            elif symbol in base_stem:
+                score += 145
+            elif symbol in lowered_path:
+                score += 90
+            elif base_stem in symbol and len(base_stem) > 5:
+                score += 60
         for term in lowered_terms:
             if term == lowered_path or term == base_name:
                 score += 16
+            elif term == base_stem:
+                score += 14
             elif base_name.startswith(term) or base_name.endswith(term):
                 score += 10
             elif term in base_name:
                 score += 8
             elif term in lowered_path:
                 score += 4
+        if any("test" in hint for hint in symbol_hints + lowered_terms):
+            if "/test/" in lowered_path or "test" in base_name:
+                score += 24
         score += min(int(row.get("reference_count") or 0), 12)
         scored.append((score, int(row.get("reference_count") or 0), file_path))
 
     ranked = sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)
+    return [path for _, _, path in ranked[:limit]]
+
+
+def _rank_tree_paths_for_query(
+    tree_paths: list[str],
+    query_terms: list[str],
+    symbol_hints: list[str] | None = None,
+    limit: int = 8,
+) -> list[str]:
+    if not tree_paths:
+        return []
+
+    lowered_terms = [str(term or "").lower() for term in query_terms if str(term or "").strip()]
+    symbol_hints = [str(item or "").lower() for item in (symbol_hints or []) if str(item or "").strip()]
+    if not lowered_terms and not symbol_hints:
+        return []
+
+    scored: list[tuple[int, int, str]] = []
+    for path in tree_paths:
+        normalized = str(path or "").strip()
+        if not normalized or not _is_text_file_path(normalized):
+            continue
+        lowered_path = normalized.lower()
+        base_name = lowered_path.split("/")[-1]
+        stem = base_name.rsplit(".", 1)[0] if "." in base_name else base_name
+
+        score = 0
+        for symbol in symbol_hints:
+            if symbol == stem:
+                score += 260
+            elif symbol == base_name:
+                score += 220
+            elif symbol in stem:
+                score += 175
+            elif symbol in lowered_path:
+                score += 105
+            elif stem in symbol and len(stem) > 5:
+                score += 70
+        for term in lowered_terms:
+            if term == lowered_path:
+                score += 40
+            if term == base_name or term == stem:
+                score += 28
+            if base_name.startswith(term) or base_name.endswith(term):
+                score += 16
+            if term in stem:
+                score += 14
+            elif term in base_name:
+                score += 10
+            elif term in lowered_path:
+                score += 5
+        if any("test" in hint for hint in symbol_hints + lowered_terms):
+            if "/test/" in lowered_path or "test" in base_name:
+                score += 28
+
+        if score <= 0:
+            continue
+        scored.append((score, len(normalized), normalized))
+
+    ranked = sorted(scored, key=lambda item: (item[0], -item[1]), reverse=True)
     return [path for _, _, path in ranked[:limit]]
 
 
@@ -626,16 +757,34 @@ def _build_live_file_sources(
     current_user: UserContext,
     repo_meta: dict[str, Any],
     max_files: int = 2,
+    existing_sources: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     query_terms = _extract_search_terms(query, limit=10)
-    if not _has_file_path_signal(query):
+    symbol_hints = _extract_symbol_hints(query, limit=8)
+    preview_signal = _has_file_path_signal(query) or _has_code_preview_signal(query)
+    if not preview_signal:
         return []
-    if not query_terms:
-        return []
+    existing_sources = existing_sources if isinstance(existing_sources, list) else []
 
-    candidate_paths = _find_candidate_file_paths(db, repo_id, query_terms, limit=max_files * 2)
-    if not candidate_paths:
-        return []
+    candidate_paths = (
+        _find_candidate_file_paths(
+            db,
+            repo_id,
+            query_terms,
+            symbol_hints=symbol_hints,
+            limit=max_files * 3,
+        )
+        if query_terms
+        else []
+    )
+    for source in existing_sources[:8]:
+        files = source.get("files") if isinstance(source.get("files"), list) else []
+        for file_info in files[:4]:
+            if not isinstance(file_info, dict):
+                continue
+            file_path = str(file_info.get("file_path") or "").strip()
+            if file_path:
+                candidate_paths.append(file_path)
 
     try:
         user_id = require_user_id(db, current_user.sub)
@@ -647,17 +796,137 @@ def _build_live_file_sources(
         return []
 
     repo_full_name = str(repo_meta.get("full_name") or "").strip()
-    default_branch = str(repo_meta.get("default_branch") or "main").strip() or "main"
+    default_branch = str(repo_meta.get("default_branch") or "").strip()
     if not repo_full_name:
+        return []
+
+    branch_candidates: list[str] = []
+    if default_branch:
+        branch_candidates.append(default_branch)
+    try:
+        live_repo = github.get_repository(repo_full_name)
+        live_default_branch = str(live_repo.get("default_branch") or "").strip()
+        if live_default_branch:
+            branch_candidates.append(live_default_branch)
+    except Exception:
+        logger.warning("Unable to resolve live default branch for repo %s", repo_full_name, exc_info=True)
+    branch_candidates.extend(["main", "master"])
+    branch_candidates = [branch for branch in dict.fromkeys(branch_candidates) if branch]
+    active_branch = branch_candidates[0] if branch_candidates else "main"
+
+    try:
+        tree_paths: list[str] = []
+        for branch_name in branch_candidates:
+            try:
+                tree_rows = github.list_repository_tree(repo_full_name, branch=branch_name, max_entries=10000)
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    continue
+                raise
+            if not tree_rows:
+                continue
+            active_branch = branch_name
+            tree_paths = [str(item.get("path") or "").strip() for item in tree_rows if isinstance(item, dict)]
+            if tree_paths:
+                break
+        tree_ranked = _rank_tree_paths_for_query(
+            tree_paths,
+            query_terms,
+            symbol_hints=symbol_hints,
+            limit=max(max_files * 6, 12),
+        )
+        if tree_ranked:
+            candidate_paths.extend(tree_ranked)
+    except Exception:
+        logger.warning("Unable to rank branch tree paths for live file context", exc_info=True)
+
+    if symbol_hints:
+        symbol_queries = sorted(
+            {hint for hint in symbol_hints if len(hint) >= 5},
+            key=len,
+            reverse=True,
+        )[:2]
+        for symbol_query in symbol_queries:
+            try:
+                candidate_paths.extend(github.search_code_paths(repo_full_name, symbol_query, per_page=12))
+            except Exception:
+                logger.warning("Unable to search repository paths for symbol %s", symbol_query, exc_info=True)
+
+    # Re-rank globally so symbol matches dominate generic directory matches.
+    unique_paths = [path for path in dict.fromkeys(candidate_paths) if _is_text_file_path(path)]
+    reranked: list[tuple[int, int, str]] = []
+    lowered_terms = [term.lower() for term in query_terms]
+    for path in unique_paths:
+        lowered_path = path.lower()
+        base_name = lowered_path.split("/")[-1]
+        stem = base_name.rsplit(".", 1)[0] if "." in base_name else base_name
+        score = 0
+        for symbol in symbol_hints:
+            if symbol == stem:
+                score += 320
+            elif symbol == base_name:
+                score += 260
+            elif symbol in stem:
+                score += 205
+            elif symbol in lowered_path:
+                score += 120
+        for term in lowered_terms:
+            if term == stem:
+                score += 30
+            elif term in base_name:
+                score += 12
+            elif term in lowered_path:
+                score += 5
+        if any("test" in hint for hint in symbol_hints + lowered_terms):
+            if "/test/" in lowered_path or "test" in base_name:
+                score += 30
+        reranked.append((score, -len(path), path))
+    candidate_paths = [item[2] for item in sorted(reranked, key=lambda row: (row[0], row[1]), reverse=True)]
+
+    if not candidate_paths:
+        try:
+            tree_rows = []
+            for branch_name in branch_candidates:
+                try:
+                    tree_rows = github.list_repository_tree(repo_full_name, branch=branch_name, max_entries=10000)
+                except HTTPException as exc:
+                    if exc.status_code == 404:
+                        continue
+                    raise
+                if tree_rows:
+                    active_branch = branch_name
+                    break
+            candidate_paths = [
+                str(item.get("path") or "").strip()
+                for item in tree_rows
+                if isinstance(item, dict) and _is_text_file_path(str(item.get("path") or ""))
+            ][: max(max_files * 4, 8)]
+        except Exception:
+            logger.warning("Unable to fetch generic branch tree fallback for live file context", exc_info=True)
+            candidate_paths = []
+
+    if not candidate_paths:
         return []
 
     live_sources: list[dict[str, Any]] = []
     for file_path in candidate_paths:
-        try:
-            content = github.get_file_content(repo_full_name, file_path, ref=default_branch, max_chars=14000)
-        except Exception:
-            logger.warning("Unable to fetch live file content for %s", file_path, exc_info=True)
-            continue
+        content = ""
+        content_branch = active_branch
+        for branch_name in dict.fromkeys([active_branch, *branch_candidates]):
+            try:
+                branch_content = github.get_file_content(repo_full_name, file_path, ref=branch_name, max_chars=14000)
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    continue
+                logger.warning("Unable to fetch live file content for %s from %s", file_path, branch_name, exc_info=True)
+                continue
+            except Exception:
+                logger.warning("Unable to fetch live file content for %s from %s", file_path, branch_name, exc_info=True)
+                continue
+            if str(branch_content or "").strip():
+                content = branch_content
+                content_branch = branch_name
+                break
 
         normalized_content = str(content or "").strip()
         if not normalized_content:
@@ -674,7 +943,7 @@ def _build_live_file_sources(
                 "pr_url": None,
                 "summary": f"Current code excerpt from {file_path}:\n{excerpt}",
                 "intent": (
-                    f"Live code snapshot from {file_path} on branch {default_branch}. "
+                    f"Live code snapshot from {file_path} on branch {content_branch}. "
                     "Prefer this for code-level answers about this file."
                 ),
                 "file_excerpt": excerpt,
@@ -1076,6 +1345,7 @@ def chat_query(
         current_user,
         repo_meta,
         max_files=2,
+        existing_sources=sources,
     )
     if live_file_sources:
         sources = _merge_sources(

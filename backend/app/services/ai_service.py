@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 _WORD_RE = re.compile(r"[a-zA-Z0-9_]{3,}")
 _PATH_RE = re.compile(r"(?:[A-Za-z0-9_.-]+/){2,}[A-Za-z0-9_.-]+")
+_CODE_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_+-]*\s*|\s*```$", re.DOTALL)
 _TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
 _UNICODE_QUOTE_TRANSLATION = str.maketrans(
     {
@@ -27,6 +28,26 @@ _UNICODE_QUOTE_TRANSLATION = str.maketrans(
         "\u00bb": '"',
     }
 )
+_CODE_TERM_STOP_WORDS = {
+    "about",
+    "code",
+    "does",
+    "function",
+    "functions",
+    "help",
+    "line",
+    "lines",
+    "method",
+    "methods",
+    "show",
+    "snippet",
+    "snippets",
+    "tell",
+    "what",
+    "where",
+    "which",
+    "with",
+}
 
 
 class RetryableAIError(Exception):
@@ -412,6 +433,142 @@ class AIService:
         )
         return any(signal in lowered for signal in signals)
 
+    def _query_prefers_code_snippets(self, query: str) -> bool:
+        lowered = str(query or "").lower()
+        signals = (
+            "show code",
+            "show me the code",
+            "code snippet",
+            "snippet",
+            "implementation",
+            "how is",
+            "function",
+            "method",
+            "class",
+            "write code",
+            "generate code",
+            "create code",
+            "example code",
+            "new function",
+            "new file",
+        )
+        return any(signal in lowered for signal in signals)
+
+    def _query_requests_code_generation(self, query: str) -> bool:
+        lowered = str(query or "").lower()
+        signals = (
+            "write ",
+            "generate ",
+            "create ",
+            "scaffold",
+            "build ",
+            "implement ",
+            "give me code",
+            "example code",
+            "new function",
+            "new file",
+        )
+        return any(signal in lowered for signal in signals)
+
+    def _extract_query_code_terms(self, query: str, limit: int = 8) -> list[str]:
+        terms: list[str] = []
+        seen: set[str] = set()
+        for token in _WORD_RE.findall(str(query or "").lower()):
+            normalized = token.strip("_").lower()
+            if len(normalized) < 3 or normalized in _CODE_TERM_STOP_WORDS:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            terms.append(normalized)
+            if len(terms) >= limit:
+                break
+        return terms
+
+    def _infer_language_from_path(self, file_path: str | None) -> str:
+        lowered = str(file_path or "").lower()
+        if lowered.endswith(".py"):
+            return "python"
+        if lowered.endswith(".ts"):
+            return "typescript"
+        if lowered.endswith(".tsx"):
+            return "tsx"
+        if lowered.endswith(".js"):
+            return "javascript"
+        if lowered.endswith(".jsx"):
+            return "jsx"
+        if lowered.endswith(".java"):
+            return "java"
+        if lowered.endswith(".go"):
+            return "go"
+        if lowered.endswith(".rs"):
+            return "rust"
+        if lowered.endswith(".cs"):
+            return "csharp"
+        if lowered.endswith(".sql"):
+            return "sql"
+        if lowered.endswith(".sh"):
+            return "bash"
+        if lowered.endswith(".html"):
+            return "html"
+        if lowered.endswith(".css"):
+            return "css"
+        if lowered.endswith(".yaml") or lowered.endswith(".yml"):
+            return "yaml"
+        if lowered.endswith(".json"):
+            return "json"
+        return "text"
+
+    def _infer_requested_language(self, query: str) -> str:
+        lowered = str(query or "").lower()
+        hints = (
+            ("python", "python"),
+            ("typescript", "typescript"),
+            ("ts ", "typescript"),
+            ("tsx", "tsx"),
+            ("javascript", "javascript"),
+            ("js ", "javascript"),
+            ("java", "java"),
+            ("go ", "go"),
+            ("golang", "go"),
+            ("rust", "rust"),
+            ("c#", "csharp"),
+            ("csharp", "csharp"),
+            ("sql", "sql"),
+            ("bash", "bash"),
+            ("shell", "bash"),
+        )
+        for needle, language in hints:
+            if needle in lowered:
+                return language
+        return "python"
+
+    def _strip_markdown_code_fence(self, code: str) -> str:
+        cleaned = str(code or "").strip()
+        if not cleaned.startswith("```"):
+            return cleaned
+        return _CODE_FENCE_RE.sub("", cleaned).strip()
+
+    def _extract_relevant_code_excerpt(self, code: str, query: str, max_lines: int = 80) -> tuple[str, int, int]:
+        lines = str(code or "").splitlines()
+        if not lines:
+            return "", 1, 1
+
+        if len(lines) <= max_lines:
+            return "\n".join(lines).strip(), 1, len(lines)
+
+        terms = self._extract_query_code_terms(query, limit=6)
+        start = 0
+        for index, line in enumerate(lines):
+            lowered_line = line.lower()
+            if any(term in lowered_line for term in terms):
+                start = max(0, index - 8)
+                break
+
+        end = min(len(lines), start + max_lines)
+        excerpt = "\n".join(lines[start:end]).strip()
+        return excerpt, start + 1, end
+
     def _is_general_query(
         self,
         query: str,
@@ -636,6 +793,9 @@ class AIService:
             '  "code_references": [\n'
             '      {"file_path":"...", "start_line": null, "end_line": null, "pr_number": null, "note":"..."}\n'
             "  ],\n"
+            '  "code_snippets": [\n'
+            '      {"title":"...", "description":"...", "language":"python", "code":"...", "file_path":"...", "start_line": null, "end_line": null, "source":"repository|generated"}\n'
+            "  ],\n"
             '  "timeline_highlights": [{"label":"...", "detail":"..."}],\n'
             '  "limitations": ["..."]\n'
             "}\n\n"
@@ -647,7 +807,9 @@ class AIService:
             "5) For high-level questions, explain outcomes in plain language and avoid dumping raw file paths.\n"
             "6) For general questions, keep code_references empty and avoid repository-specific claims.\n"
             "7) If data is missing, limitations must explicitly call it out.\n\n"
-            "8) When file_excerpt is present for a source, use it for code-level reasoning about that file.\n\n"
+            "8) When file_excerpt is present for a source, use it for code-level reasoning and provide repository code_snippets.\n"
+            "9) If the user asks for code generation, include at least one code_snippet with source='generated'.\n"
+            "10) Keep code snippets concise and directly relevant.\n\n"
             f"QUESTION:\n{query.strip()}\n\n"
             f"PR_CONTEXT:\n{json.dumps(compact_sources, default=str)}\n\n"
             f"REPO_OVERVIEW_CONTEXT:\n{json.dumps(repo_overview_context or {}, default=str)}"
@@ -676,6 +838,7 @@ class AIService:
             '  "summary": "2-4 sentence summary",\n'
             '  "sections": [{"heading":"...", "bullets":["...", "..."]}],\n'
             '  "code_references": [],\n'
+            '  "code_snippets": [{"title":"...", "description":"...", "language":"python", "code":"...", "file_path":"...", "start_line": null, "end_line": null, "source":"generated"}],\n'
             '  "timeline_highlights": [],\n'
             '  "limitations": ["..."]\n'
             "}\n\n"
@@ -683,7 +846,8 @@ class AIService:
             "1) Use plain, practical engineering language.\n"
             "2) Keep sections concise and actionable.\n"
             "3) code_references and timeline_highlights must be empty arrays.\n"
-            "4) Mention that guidance is general if repository evidence is required.\n\n"
+            "4) If the user asks for code/examples, include at least one generated code_snippet.\n"
+            "5) Mention that guidance is general if repository evidence is required.\n\n"
             f"QUESTION:\n{query.strip()}"
         )
         raw = self._call_gemini(
@@ -728,6 +892,7 @@ class AIService:
             '  "summary": "2-4 sentence summary",\n'
             '  "sections": [{"heading":"...", "bullets":["...", "..."]}],\n'
             '  "code_references": [{"file_path":"...", "start_line": null, "end_line": null, "pr_number": null, "note":"..."}],\n'
+            '  "code_snippets": [{"title":"...", "description":"...", "language":"python", "code":"...", "file_path":"...", "start_line": null, "end_line": null, "source":"repository|generated"}],\n'
             '  "timeline_highlights": [{"label":"...", "detail":"..."}],\n'
             '  "limitations": ["..."]\n'
             "}\n"
@@ -755,6 +920,7 @@ class AIService:
                 '  "summary": "2-4 sentence summary",\n'
                 '  "sections": [{"heading":"...", "bullets":["...", "..."]}],\n'
                 '  "code_references": [{"file_path":"...", "start_line": null, "end_line": null, "pr_number": null, "note":"..."}],\n'
+                '  "code_snippets": [{"title":"...", "description":"...", "language":"python", "code":"...", "file_path":"...", "start_line": null, "end_line": null, "source":"repository|generated"}],\n'
                 '  "timeline_highlights": [{"label":"...", "detail":"..."}],\n'
                 '  "limitations": ["..."]\n'
                 "}\n"
@@ -859,10 +1025,20 @@ class AIService:
             )
 
         prefer_code_refs = self._query_prefers_code_references(query)
+        prefer_code_snippets = self._query_prefers_code_snippets(query)
+        generation_requested = self._query_requests_code_generation(query)
         code_refs = self._normalize_code_references(
             parsed.get("code_references"),
             context_sources,
             fallback_to_defaults=prefer_code_refs,
+        )
+        code_snippets = self._normalize_code_snippets(
+            parsed.get("code_snippets"),
+            context_sources,
+            code_refs,
+            query,
+            prefer_code_snippets=prefer_code_snippets,
+            generation_requested=generation_requested,
         )
         timeline_highlights = self._normalize_timeline_highlights(
             parsed.get("timeline_highlights"),
@@ -901,6 +1077,7 @@ class AIService:
             "summary": summary,
             "sections": sections,
             "code_references": code_refs,
+            "code_snippets": code_snippets,
             "timeline_highlights": timeline_highlights,
             "limitations": limitations,
         }
@@ -938,6 +1115,185 @@ class AIService:
         if not fallback_to_defaults:
             return []
         return self._post_process_code_references(self._default_code_references(context_sources))
+
+    def _default_file_name_for_language(self, language: str) -> str:
+        lang = str(language or "").lower()
+        if lang == "python":
+            return "new_module.py"
+        if lang in {"typescript", "tsx"}:
+            return "newModule.ts"
+        if lang == "javascript":
+            return "newModule.js"
+        if lang == "java":
+            return "NewFeature.java"
+        if lang == "go":
+            return "new_feature.go"
+        if lang == "rust":
+            return "new_feature.rs"
+        if lang == "csharp":
+            return "NewFeature.cs"
+        return "new_code.txt"
+
+    def _fallback_generated_code_snippet(self, query: str) -> dict[str, Any]:
+        language = self._infer_requested_language(query)
+        if language == "typescript":
+            code = (
+                "export function newFeature(input: string): string {\n"
+                "  // TODO: Replace with domain-specific implementation.\n"
+                "  const normalized = input.trim();\n"
+                "  return normalized;\n"
+                "}\n"
+            )
+        elif language == "javascript":
+            code = (
+                "function newFeature(input) {\n"
+                "  // TODO: Replace with domain-specific implementation.\n"
+                "  const normalized = String(input || '').trim();\n"
+                "  return normalized;\n"
+                "}\n"
+            )
+        elif language == "python":
+            code = (
+                "def new_feature(input_value: str) -> str:\n"
+                "    \"\"\"Starter implementation generated from your request.\"\"\"\n"
+                "    # TODO: Replace with domain-specific logic.\n"
+                "    return input_value.strip()\n"
+            )
+        else:
+            code = (
+                "// Starter implementation generated from your request.\n"
+                "// TODO: Replace with domain-specific logic.\n"
+            )
+
+        return {
+            "title": "Generated Starter",
+            "description": "Starter snippet generated because your query requested new code.",
+            "language": language,
+            "code": code,
+            "file_path": self._default_file_name_for_language(language),
+            "start_line": 1,
+            "end_line": code.count("\n") + 1,
+            "source": "generated",
+        }
+
+    def _default_code_snippets(
+        self,
+        context_sources: list[dict[str, Any]],
+        code_refs: list[dict[str, Any]],
+        query: str,
+        generation_requested: bool,
+        max_items: int = 3,
+    ) -> list[dict[str, Any]]:
+        snippets: list[dict[str, Any]] = []
+        for source in context_sources[:10]:
+            file_excerpt = str(source.get("file_excerpt") or "").strip()
+            if not file_excerpt:
+                continue
+            files = source.get("files") if isinstance(source.get("files"), list) else []
+            file_info = files[0] if files and isinstance(files[0], dict) else {}
+            file_path = str(file_info.get("file_path") or "").strip()
+            if not file_path:
+                continue
+            snippet_code, local_start, local_end = self._extract_relevant_code_excerpt(file_excerpt, query, max_lines=80)
+            if not snippet_code:
+                continue
+            base_start = self._to_int_or_none(file_info.get("start_line")) or 1
+            start_line = base_start + local_start - 1
+            end_line = base_start + local_end - 1
+            snippets.append(
+                {
+                    "title": f"{self._file_name_from_path(file_path)} preview",
+                    "description": "Repository preview extracted from current file context.",
+                    "language": self._infer_language_from_path(file_path),
+                    "code": snippet_code,
+                    "file_path": file_path,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "source": "repository",
+                }
+            )
+            if len(snippets) >= max_items:
+                return snippets
+
+        if not snippets and code_refs:
+            for ref in code_refs[:2]:
+                file_path = str(ref.get("file_path") or "").strip()
+                if not file_path:
+                    continue
+                note = str(ref.get("note") or "").strip()
+                snippets.append(
+                    {
+                        "title": f"{self._file_name_from_path(file_path)} reference",
+                        "description": note or "Code reference is available, but line excerpt was not indexed.",
+                        "language": self._infer_language_from_path(file_path),
+                        "code": f"// Code preview not available for {file_path}. Ask for that file path to fetch a live snippet.",
+                        "file_path": file_path,
+                        "start_line": self._to_int_or_none(ref.get("start_line")),
+                        "end_line": self._to_int_or_none(ref.get("end_line")),
+                        "source": "repository",
+                    }
+                )
+
+        if generation_requested and len(snippets) < max_items:
+            snippets.append(self._fallback_generated_code_snippet(query))
+        return snippets[:max_items]
+
+    def _normalize_code_snippets(
+        self,
+        raw_code_snippets: Any,
+        context_sources: list[dict[str, Any]],
+        code_refs: list[dict[str, Any]],
+        query: str,
+        prefer_code_snippets: bool,
+        generation_requested: bool,
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        if isinstance(raw_code_snippets, list):
+            for item in raw_code_snippets[:6]:
+                if not isinstance(item, dict):
+                    continue
+                code = self._strip_markdown_code_fence(str(item.get("code") or ""))
+                if not code.strip():
+                    continue
+                file_path = str(item.get("file_path") or "").strip()[:260]
+                language = str(item.get("language") or "").strip().lower()
+                if not language:
+                    language = self._infer_language_from_path(file_path)
+                source = str(item.get("source") or "").strip().lower()
+                if source not in {"repository", "generated"}:
+                    source = "generated" if generation_requested else "repository"
+                normalized.append(
+                    {
+                        "title": str(item.get("title") or "Code Snippet").strip()[:120],
+                        "description": str(item.get("description") or "").strip()[:260],
+                        "language": language or "text",
+                        "code": code[:12000],
+                        "file_path": file_path or None,
+                        "start_line": self._to_int_or_none(item.get("start_line")),
+                        "end_line": self._to_int_or_none(item.get("end_line")),
+                        "source": source,
+                    }
+                )
+
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for snippet in normalized:
+            code_text = str(snippet.get("code") or "")
+            signature = (str(snippet.get("file_path") or ""), str(snippet.get("title") or ""), code_text[:120])
+            if signature in seen:
+                continue
+            seen.add(signature)
+            deduped.append(snippet)
+
+        if not deduped and (prefer_code_snippets or generation_requested):
+            deduped = self._default_code_snippets(
+                context_sources,
+                code_refs,
+                query,
+                generation_requested=generation_requested,
+                max_items=3,
+            )
+        return deduped[:4]
 
     def _normalize_timeline_highlights(
         self,
@@ -1058,6 +1414,36 @@ class AIService:
                     lines.append(f"- `{file_path}`{line_text}{pr_text}: {note}")
                 else:
                     lines.append(f"- `{file_path}`{line_text}{pr_text}")
+            lines.append("")
+
+        snippets = structured.get("code_snippets")
+        if isinstance(snippets, list) and snippets:
+            lines.append("### Code Snippets")
+            for snippet in snippets[:4]:
+                if not isinstance(snippet, dict):
+                    continue
+                title = str(snippet.get("title") or "Snippet").strip()
+                description = str(snippet.get("description") or "").strip()
+                file_path = str(snippet.get("file_path") or "").strip()
+                language = str(snippet.get("language") or "text").strip()
+                source = str(snippet.get("source") or "").strip().lower()
+                code = self._strip_markdown_code_fence(str(snippet.get("code") or "")).strip()
+                if not code:
+                    continue
+                meta_parts: list[str] = []
+                if file_path:
+                    meta_parts.append(f"`{file_path}`")
+                if source:
+                    meta_parts.append(source)
+                if title:
+                    lines.append(f"- **{title}**")
+                if meta_parts:
+                    lines.append(f"  - {' | '.join(meta_parts)}")
+                if description:
+                    lines.append(f"  - {description}")
+                lines.append(f"```{language}")
+                lines.append(code[:12000])
+                lines.append("```")
             lines.append("")
 
         timeline = structured.get("timeline_highlights")
@@ -1539,7 +1925,16 @@ class AIService:
         ranked = [source for _, source in sorted(scored, key=lambda item: item[0], reverse=True)]
         top = ranked[:4]
         prefer_code_refs = self._query_prefers_code_references(query)
+        prefer_code_snippets = self._query_prefers_code_snippets(query)
+        generation_requested = self._query_requests_code_generation(query)
         code_refs = self._post_process_code_references(self._default_code_references(top)) if prefer_code_refs else []
+        code_snippets = self._default_code_snippets(
+            top,
+            code_refs,
+            query,
+            generation_requested=generation_requested,
+            max_items=3,
+        ) if (prefer_code_snippets or generation_requested) else []
         repo_context = repo_overview_context if isinstance(repo_overview_context, dict) else {}
 
         if general_query and not context_sources and not repo_context:
@@ -1556,6 +1951,7 @@ class AIService:
                     }
                 ],
                 "code_references": [],
+                "code_snippets": [self._fallback_generated_code_snippet(query)] if generation_requested else [],
                 "timeline_highlights": [],
                 "limitations": ["Repository evidence was not available in this response."],
             }
@@ -1734,6 +2130,7 @@ class AIService:
             "summary": summary_text,
             "sections": sections,
             "code_references": code_refs,
+            "code_snippets": code_snippets,
             "timeline_highlights": timeline_highlights,
             "limitations": limitations,
         }

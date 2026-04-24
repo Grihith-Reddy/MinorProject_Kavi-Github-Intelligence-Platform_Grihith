@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom'
 
 import { firebaseAuth, googleProvider } from './firebase'
 
-const CHAT_STORAGE_PREFIX = 'kavi.chat.'
 const ACTIVE_REPO_STORAGE_KEY = 'kavi.activeRepoId'
 
 export interface AuthUser {
@@ -41,15 +40,8 @@ function mapFirebaseUser(user: FirebaseUser | null): AuthUser | null {
 
 function clearSessionStorageArtifacts() {
   try {
-    const keysToDelete: string[] = []
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index)
-      if (!key) continue
-      if (key === ACTIVE_REPO_STORAGE_KEY || key.startsWith(CHAT_STORAGE_PREFIX)) {
-        keysToDelete.push(key)
-      }
-    }
-    keysToDelete.forEach((key) => window.localStorage.removeItem(key))
+    // Preserve chat history across logout; only clear lightweight session-local routing state.
+    window.localStorage.removeItem(ACTIVE_REPO_STORAGE_KEY)
   } catch {
     // noop
   }

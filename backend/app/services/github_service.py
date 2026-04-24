@@ -236,6 +236,43 @@ class GitHubService:
 
         return text_content[: max(1, max_chars)]
 
+    def search_code_paths(
+        self,
+        full_name: str,
+        query: str,
+        *,
+        per_page: int = 20,
+    ) -> list[str]:
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            return []
+
+        url = f"{settings.GITHUB_API_BASE}/search/code"
+        payload = self._request(
+            "GET",
+            url,
+            params={
+                "q": f"{normalized_query} repo:{full_name} in:path",
+                "per_page": max(1, min(per_page, 100)),
+            },
+            allow_wait=True,
+        )
+        items = payload.get("items") if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return []
+
+        paths: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            paths.append(path)
+        return paths
+
 
 @retry(
     retry=retry_if_exception_type((requests.RequestException, RetryableGitHubError)),
