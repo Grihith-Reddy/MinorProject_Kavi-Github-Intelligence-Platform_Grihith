@@ -61,6 +61,7 @@ import {
   Compass,
   File,
   FolderGit2,
+  GitBranch,
   GitPullRequest,
   Loader2,
   Send,
@@ -73,7 +74,13 @@ import { useAsync } from '../hooks/useAsync'
 import { useApiClient } from '../services/apiClient'
 import { ChatMode, queryChat } from '../services/chatService'
 import { getRepositoryStatus } from '../services/githubService'
-import { listKnowledgeEntries, listKnowledgeFiles } from '../services/knowledgeService'
+import {
+  getGitVisualization,
+  listKnowledgeEntries,
+  listKnowledgeFiles,
+  type GitVisualizationPullRequest,
+  type GitVisualizationResponse,
+} from '../services/knowledgeService'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,12 +90,22 @@ interface TimelineHighlight { label: string; detail: string }
 interface StructuredAnswer { title?: string; summary?: string; sections?: StructuredSection[]; code_references?: CodeReference[]; timeline_highlights?: TimelineHighlight[]; limitations?: string[] }
 interface ChatEntry { role: 'user' | 'assistant'; content: string; structured?: StructuredAnswer | null }
 interface ChatSource { [key: string]: unknown }
+interface KnowledgeFileRow { file_path: string; reference_count?: number }
+interface KnowledgeEntryRow {
+  id?: string
+  summary?: string
+  intent?: string
+  github_pr_number?: number
+  pr_title?: string
+  pr_state?: string
+  created_at?: string
+}
 interface ChatQueryResponse { answer?: string; answer_structured?: StructuredAnswer | null; sources?: ChatSource[]; context?: ChatSource[]; mode?: ChatMode }
-interface WorkspaceRenderProps { repoId: string; repositoryName: string; messages: ChatEntry[]; chatLoading: boolean; chatInput: string; setChatInput: (v: string) => void; chatSources: ChatSource[]; entries: any[]; files: any[]; entriesLoading: boolean; entriesError: Error | null; filesLoading: boolean; filesError: Error | null; noPrContext: boolean; onSend: (input: string) => void; messagesEndRef: RefObject<HTMLDivElement>; streamingIndex: number | null; onAssistantStreamComplete: (index: number) => void }
-interface WorkspaceOverlayProps { repoId: string; repositoryName: string; entries: any[]; files: any[]; chatSources: ChatSource[]; entriesLoading: boolean; entriesError: Error | null; filesLoading: boolean; filesError: Error | null; onNavigate?: () => void }
+interface WorkspaceRenderProps { repoId: string; repositoryName: string; messages: ChatEntry[]; chatLoading: boolean; chatInput: string; setChatInput: (v: string) => void; chatSources: ChatSource[]; entries: KnowledgeEntryRow[]; files: KnowledgeFileRow[]; entriesLoading: boolean; entriesError: Error | null; filesLoading: boolean; filesError: Error | null; noPrContext: boolean; onSend: (input: string) => void; messagesEndRef: RefObject<HTMLDivElement>; streamingIndex: number | null; onAssistantStreamComplete: (index: number) => void; gitVisualization: GitVisualizationResponse | null; gitVisualizationLoading: boolean; gitVisualizationError: Error | null }
+interface WorkspaceOverlayProps { repoId: string; repositoryName: string; entries: KnowledgeEntryRow[]; files: KnowledgeFileRow[]; chatSources: ChatSource[]; entriesLoading: boolean; entriesError: Error | null; filesLoading: boolean; filesError: Error | null; onNavigate?: () => void; gitVisualization: GitVisualizationResponse | null; gitVisualizationLoading: boolean; gitVisualizationError: Error | null }
 interface DashboardChatPaneProps { messages: ChatEntry[]; chatLoading: boolean; chatInput: string; setChatInput: (v: string) => void; noPrContext: boolean; onSend: (input: string) => void; messagesEndRef: RefObject<HTMLDivElement>; streamingIndex: number | null; onAssistantStreamComplete: (index: number) => void }
 
-type WorkspacePanelId = 'repository' | 'focus' | 'prs' | 'files'
+type WorkspacePanelId = 'repository' | 'focus' | 'prs' | 'files' | 'git'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -101,6 +118,7 @@ const WORKSPACE_PANEL_ITEMS: { id: WorkspacePanelId; label: string; icon: Lucide
   { id: 'focus', label: 'Focus', icon: Compass },
   { id: 'prs', label: 'PRs', icon: GitPullRequest },
   { id: 'files', label: 'Files', icon: File },
+  { id: 'git', label: 'Git Visualization', icon: GitBranch },
 ]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -151,6 +169,302 @@ function resolveChatMode(input: string): ChatMode {
   if (overviewPhrases.some((p) => value.includes(p))) return 'repo_overview'
   if (value.includes('entire repo') || value.includes('whole repo')) return 'repo_overview'
   return 'default'
+}
+
+const GIT_LANE_COLORS = ['#22B8CF', '#F59F00', '#845EF7', '#2F9E44', '#FA5252', '#5C7CFA', '#E64980', '#0CA678']
+
+interface GitLane {
+  branch: string
+  x: number
+  side: 'left' | 'center' | 'right'
+  color: string
+}
+
+interface GitGraphNode {
+  id: string
+  x: number
+  y: number
+  color: string
+  branch: string
+  prNumber: number | null
+  merged: boolean
+  kind: 'source' | 'target'
+}
+
+interface GitGraphEdge {
+  id: string
+  fromX: number
+  fromY: number
+  toX: number
+  toY: number
+  merged: boolean
+}
+
+interface GitGraphLayout {
+  width: number
+  height: number
+  lanes: GitLane[]
+  nodes: GitGraphNode[]
+  edges: GitGraphEdge[]
+  mainBranch: string
+}
+
+function safeBranchName(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.trim()
+  return normalized || fallback
+}
+
+function toEpochMs(value: unknown): number {
+  if (typeof value !== 'string' || !value.trim()) return 0
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function buildGitGraphLayout(pullRequests: GitVisualizationPullRequest[], defaultBranch: string | null | undefined): GitGraphLayout {
+  const fallbackMain = safeBranchName(defaultBranch, 'main')
+  const normalized = pullRequests.map((pr, index) => {
+    const baseBranch = safeBranchName(pr.base_branch, fallbackMain)
+    const headBranch = safeBranchName(pr.head_branch, baseBranch || fallbackMain)
+    const eventAt = pr.event_at ?? pr.merged_at ?? pr.created_at ?? null
+    return {
+      index,
+      baseBranch,
+      headBranch,
+      merged: Boolean(pr.merged_at),
+      eventAt,
+      createdAt: pr.created_at ?? null,
+      prNumber: typeof pr.github_pr_number === 'number' ? pr.github_pr_number : null,
+    }
+  })
+
+  if (!normalized.length) {
+    return {
+      width: 360,
+      height: 280,
+      lanes: [{ branch: fallbackMain, x: 180, side: 'center', color: GIT_LANE_COLORS[0] }],
+      nodes: [],
+      edges: [],
+      mainBranch: fallbackMain,
+    }
+  }
+
+  const branchCounts = new Map<string, number>()
+  for (const pr of normalized) {
+    branchCounts.set(pr.baseBranch, (branchCounts.get(pr.baseBranch) ?? 0) + 1)
+    branchCounts.set(pr.headBranch, (branchCounts.get(pr.headBranch) ?? 0) + 1)
+  }
+
+  const fallbackBranch = Array.from(branchCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? fallbackMain
+  const mainBranch = safeBranchName(defaultBranch, fallbackBranch)
+  if (!branchCounts.has(mainBranch)) branchCounts.set(mainBranch, 1)
+
+  const sideBranches = Array.from(branchCounts.entries())
+    .map(([branch, count]) => ({ branch, count }))
+    .filter((item) => item.branch !== mainBranch)
+    .sort((a, b) => b.count - a.count || a.branch.localeCompare(b.branch))
+    .map((item) => item.branch)
+
+  const leftBranches: string[] = []
+  const rightBranches: string[] = []
+  sideBranches.forEach((branch, index) => {
+    if (index % 2 === 0) leftBranches.push(branch)
+    else rightBranches.push(branch)
+  })
+
+  const maxSideDepth = Math.max(leftBranches.length, rightBranches.length)
+  const centerX = 180 + maxSideDepth * 94
+  const graphWidth = Math.max(360, centerX * 2)
+  const laneSpacing = 94
+
+  const lanes: GitLane[] = [
+    { branch: mainBranch, x: centerX, side: 'center', color: GIT_LANE_COLORS[0] },
+    ...leftBranches.map((branch, index) => ({
+      branch,
+      x: centerX - laneSpacing * (index + 1),
+      side: 'left' as const,
+      color: GIT_LANE_COLORS[(index + 1) % GIT_LANE_COLORS.length],
+    })),
+    ...rightBranches.map((branch, index) => ({
+      branch,
+      x: centerX + laneSpacing * (index + 1),
+      side: 'right' as const,
+      color: GIT_LANE_COLORS[(leftBranches.length + index + 1) % GIT_LANE_COLORS.length],
+    })),
+  ]
+
+  const laneByBranch = new Map(lanes.map((lane) => [lane.branch, lane]))
+  const sorted = normalized.slice().sort((a, b) => {
+    const aTime = toEpochMs(a.eventAt) || toEpochMs(a.createdAt) || a.index
+    const bTime = toEpochMs(b.eventAt) || toEpochMs(b.createdAt) || b.index
+    return aTime - bTime
+  })
+
+  const stepY = 56
+  const height = Math.max(320, sorted.length * stepY + 120)
+  const nodes: GitGraphNode[] = []
+  const edges: GitGraphEdge[] = []
+
+  sorted.forEach((pr, index) => {
+    const headLane = laneByBranch.get(pr.headBranch) ?? laneByBranch.get(mainBranch)
+    const baseLane = laneByBranch.get(pr.baseBranch) ?? laneByBranch.get(mainBranch)
+    if (!headLane || !baseLane) return
+    const y = height - 50 - index * stepY
+    const prId = pr.prNumber ?? index
+
+    nodes.push({
+      id: `pr-${prId}-source-${index}`,
+      x: headLane.x,
+      y,
+      color: headLane.color,
+      branch: headLane.branch,
+      prNumber: pr.prNumber,
+      merged: pr.merged,
+      kind: 'source',
+    })
+
+    if (headLane.branch !== baseLane.branch) {
+      nodes.push({
+        id: `pr-${prId}-target-${index}`,
+        x: baseLane.x,
+        y,
+        color: baseLane.color,
+        branch: baseLane.branch,
+        prNumber: pr.prNumber,
+        merged: pr.merged,
+        kind: 'target',
+      })
+      edges.push({
+        id: `edge-${prId}-${index}`,
+        fromX: headLane.x,
+        fromY: y,
+        toX: baseLane.x,
+        toY: y,
+        merged: pr.merged,
+      })
+    }
+  })
+
+  return { width: graphWidth, height, lanes, nodes, edges, mainBranch }
+}
+
+function GitVisualizationPanel({
+  data,
+  loading,
+  error,
+}: {
+  data: GitVisualizationResponse | null
+  loading: boolean
+  error: Error | null
+}) {
+  if (loading) {
+    return <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 13, color: 'rgba(24,29,31,0.5)' }}>Loading branch graph...</p>
+  }
+
+  if (error) {
+    return <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 13, color: '#9B3A26', display: 'flex', alignItems: 'center', gap: 4 }}><AlertCircle size={12} /> Unable to load Git visualization.</p>
+  }
+
+  const pullRequests = Array.isArray(data?.pull_requests) ? data.pull_requests : []
+  const defaultBranch = typeof data?.repository?.default_branch === 'string' ? data.repository.default_branch : 'main'
+  const layout = buildGitGraphLayout(pullRequests, defaultBranch)
+
+  if (!pullRequests.length) {
+    return <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 13, color: 'rgba(24,29,31,0.5)' }}>No pull requests are synced yet, so there is no branch graph to render.</p>
+  }
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ borderRadius: 16, border: '1px solid #E7E7E9', background: '#F9F9FA', padding: '10px 12px' }}>
+        <p style={{ fontFamily: "'Gabarito', sans-serif", fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(24,29,31,0.45)', marginBottom: 4 }}>Main branch</p>
+        <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 14, fontWeight: 600, color: '#181D1F' }}>{layout.mainBranch}</p>
+      </div>
+
+      <div style={{ borderRadius: 16, border: '1px solid #E7E7E9', background: '#fff', overflow: 'auto', maxHeight: '62vh' }}>
+        <svg width={layout.width} height={layout.height} role="img" aria-label="Git branch visualization">
+          {layout.lanes.map((lane) => (
+            <g key={`lane-${lane.branch}`}>
+              <line
+                x1={lane.x}
+                y1={28}
+                x2={lane.x}
+                y2={layout.height - 24}
+                stroke={lane.side === 'center' ? 'rgba(24,29,31,0.45)' : 'rgba(24,29,31,0.18)'}
+                strokeWidth={lane.side === 'center' ? 2.4 : 1.6}
+              />
+              <text
+                x={lane.x}
+                y={20}
+                textAnchor="middle"
+                style={{
+                  fontFamily: "'Gabarito', sans-serif",
+                  fontSize: 11,
+                  fontWeight: lane.side === 'center' ? 700 : 500,
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                  fill: lane.side === 'center' ? '#181D1F' : 'rgba(24,29,31,0.6)',
+                }}
+              >
+                {lane.branch}
+              </text>
+            </g>
+          ))}
+
+          {layout.edges.map((edge) => {
+            const controlX = (edge.fromX + edge.toX) / 2
+            const controlY = edge.fromY - 24
+            return (
+              <path
+                key={edge.id}
+                d={`M ${edge.fromX} ${edge.fromY} Q ${controlX} ${controlY} ${edge.toX} ${edge.toY}`}
+                stroke={edge.merged ? 'rgba(24,29,31,0.55)' : 'rgba(24,29,31,0.3)'}
+                strokeDasharray={edge.merged ? undefined : '4 5'}
+                strokeWidth={edge.merged ? 1.8 : 1.4}
+                fill="none"
+              />
+            )
+          })}
+
+          {layout.nodes.map((node) => (
+            <g key={node.id}>
+              <circle
+                cx={node.x}
+                cy={node.y}
+                r={node.kind === 'source' ? 7 : 6}
+                fill={node.kind === 'target' && !node.merged ? '#fff' : node.color}
+                stroke={node.color}
+                strokeWidth={node.kind === 'target' && !node.merged ? 2.2 : 1.4}
+              />
+              {node.prNumber && node.kind === 'source' && (
+                <text
+                  x={node.x + 10}
+                  y={node.y + 3}
+                  style={{ fontFamily: "'Archivo', sans-serif", fontSize: 10, fill: 'rgba(24,29,31,0.55)' }}
+                >
+                  #{node.prNumber}
+                </text>
+              )}
+            </g>
+          ))}
+
+          <text
+            x={18}
+            y={layout.height / 2}
+            transform={`rotate(-90 18 ${layout.height / 2})`}
+            style={{
+              fontFamily: "'Gabarito', sans-serif",
+              fontSize: 11,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              fill: 'rgba(24,29,31,0.5)',
+            }}
+          >
+            Time up
+          </text>
+        </svg>
+      </div>
+    </section>
+  )
 }
 
 // ─── Structured answer renderer ───────────────────────────────────────────────
@@ -263,7 +577,22 @@ function WorkspaceIconRail({ activePanel, onToggle }: { activePanel: WorkspacePa
 
 // ─── Overlay panel content ────────────────────────────────────────────────────
 
-function WorkspaceOverlayPanel({ panel, repoId, repositoryName, entries, files, chatSources, entriesLoading, entriesError, filesLoading, filesError, onNavigate }: WorkspaceOverlayProps & { panel: WorkspacePanelId }) {
+function WorkspaceOverlayPanel({
+  panel,
+  repoId,
+  repositoryName,
+  entries,
+  files,
+  chatSources,
+  entriesLoading,
+  entriesError,
+  filesLoading,
+  filesError,
+  onNavigate,
+  gitVisualization,
+  gitVisualizationLoading,
+  gitVisualizationError,
+}: WorkspaceOverlayProps & { panel: WorkspacePanelId }) {
   const referencedEntries = (entries.length ? entries : (chatSources as any[])).slice(0, 7)
   const shortRepo = repositoryName.includes('/') ? repositoryName.split('/').pop() ?? repositoryName : repositoryName
 
@@ -322,6 +651,16 @@ function WorkspaceOverlayPanel({ panel, repoId, repositoryName, entries, files, 
           </div>
         )
       }) : <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 13, color: 'rgba(24,29,31,0.5)' }}>No PR context available yet.</p>}
+    </section>
+  )
+
+  if (panel === 'git') return (
+    <section>
+      <p style={labelStyle}>Git Visualization</p>
+      <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 12, color: 'rgba(24,29,31,0.55)', marginBottom: 10 }}>
+        Main branch stays centered while side branches are split left and right, with merge paths connected per PR.
+      </p>
+      <GitVisualizationPanel data={gitVisualization} loading={gitVisualizationLoading} error={gitVisualizationError} />
     </section>
   )
 
@@ -396,7 +735,8 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
 
         {messages.map((message, index) => {
           const isStreaming = message.role === 'assistant' && index === streamingIndex
-          const useStreamingRenderer = message.role === 'assistant' && isStreaming
+          const hasStructuredAnswer = message.role === 'assistant' && Boolean(message.structured)
+          const useStreamingRenderer = message.role === 'assistant' && isStreaming && !hasStructuredAnswer
           return (
             <motion.article
               key={`${message.role}-${index}`}
@@ -590,6 +930,9 @@ function DashboardWorkspaceV2(props: WorkspaceRenderProps) {
                   entriesError={props.entriesError}
                   filesLoading={props.filesLoading}
                   filesError={props.filesError}
+                  gitVisualization={props.gitVisualization}
+                  gitVisualizationLoading={props.gitVisualizationLoading}
+                  gitVisualizationError={props.gitVisualizationError}
                   onNavigate={closePanel}
                 />
               </motion.aside>
@@ -619,6 +962,7 @@ export function DashboardPage() {
   const { data: filesData, error: filesError, loading: filesLoading } = useAsync(() => (repoId ? listKnowledgeFiles(api, repoId) : Promise.resolve(null)), [api, repoId])
   const { data: entriesData, error: entriesError, loading: entriesLoading } = useAsync(() => (repoId ? listKnowledgeEntries(api, repoId) : Promise.resolve(null)), [api, repoId])
   const { data: repositoryStatus } = useAsync(() => (repoId ? getRepositoryStatus(api, repoId) : Promise.resolve(null)), [api, repoId])
+  const { data: gitVisualizationData, error: gitVisualizationError, loading: gitVisualizationLoading } = useAsync(() => (repoId ? getGitVisualization(api, repoId) : Promise.resolve(null)), [api, repoId])
 
   const [messages, setMessages] = useState<ChatEntry[]>(() => defaultMessages(welcomeName))
   const [chatLoading, setChatLoading] = useState(false)
@@ -692,8 +1036,8 @@ export function DashboardPage() {
       }
       setMessages((prev) => {
         const next = [...prev, newAssistantMsg]
-        // Set streaming index to the last message (the one we just added)
-        setStreamingIndex(next.length - 1)
+        if (newAssistantMsg.structured) setStreamingIndex(null)
+        else setStreamingIndex(next.length - 1)
         return next
       })
       if (Array.isArray(data.sources)) setChatSources(data.sources)
@@ -740,6 +1084,9 @@ export function DashboardPage() {
       messagesEndRef={messagesEndRef}
       streamingIndex={streamingIndex}
       onAssistantStreamComplete={handleAssistantStreamComplete}
+      gitVisualization={gitVisualizationData ?? null}
+      gitVisualizationLoading={gitVisualizationLoading}
+      gitVisualizationError={gitVisualizationError}
     />
   )
 }

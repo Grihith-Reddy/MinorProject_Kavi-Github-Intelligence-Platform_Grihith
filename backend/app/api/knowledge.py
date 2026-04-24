@@ -135,6 +135,46 @@ def timeline(
     return {"timeline": [dict(row) for row in rows]}
 
 
+@router.get("/repositories/{repo_id}/git-visualization")
+def git_visualization(
+    repo_id: str,
+    limit: int = Query(300, ge=20, le=1200),
+    current_user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    repo = assert_repo_access(db, repo_id, current_user.sub)
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                pr.github_pr_number,
+                pr.title,
+                pr.state,
+                pr.base_branch,
+                pr.head_branch,
+                pr.created_at,
+                pr.merged_at,
+                COALESCE(pr.merged_at, pr.updated_at, pr.created_at) AS event_at
+            FROM pull_requests pr
+            WHERE pr.repo_id = :repo_id
+            ORDER BY COALESCE(pr.merged_at, pr.updated_at, pr.created_at) ASC NULLS LAST,
+                     pr.github_pr_number ASC
+            LIMIT :limit
+            """
+        ),
+        {"repo_id": repo_id, "limit": limit},
+    ).mappings().all()
+    audit_log("knowledge.git_visualization.viewed", auth0_sub=current_user.sub, repo_id=repo_id, count=len(rows))
+    return {
+        "repository": {
+            "id": repo.get("id"),
+            "full_name": repo.get("full_name"),
+            "default_branch": repo.get("default_branch"),
+        },
+        "pull_requests": [dict(row) for row in rows],
+    }
+
+
 @router.get("/repositories/{repo_id}/evolution")
 def evolution(
     repo_id: str,
