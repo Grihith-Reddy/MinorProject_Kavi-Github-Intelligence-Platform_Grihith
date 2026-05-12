@@ -105,6 +105,9 @@ export function RepositorySelectionPage() {
         @media (max-width: 768px) {
           .repo-hero-card { padding: 40px 32px 48px; flex-direction: column; align-items: flex-start; min-height: auto; }
         }
+        @media (max-width: 560px) {
+          .repo-hero-card { border-radius: 20px; padding: 28px 16px 32px; gap: 18px; }
+        }
 
         .hero-cloud-bg {
           position: absolute;
@@ -130,7 +133,7 @@ export function RepositorySelectionPage() {
         .repo-hero-h1 {
           font-family: 'Archivo', sans-serif;
           font-weight: 600;
-          font-size: clamp(40px, 5vw, 72px);
+          font-size: clamp(30px, 8vw, 72px);
           line-height: 1.05;
           letter-spacing: -0.025em;
           background: linear-gradient(169deg, rgba(3,123,181,0.9) 20%, rgba(3,120,176,0.95) 74%);
@@ -156,6 +159,13 @@ export function RepositorySelectionPage() {
           padding: 12px 20px;
           border: none;
           min-width: 260px;
+        }
+        @media (max-width: 900px) {
+          .repo-search { min-width: min(340px, 100%); width: min(340px, 100%); }
+        }
+        @media (max-width: 560px) {
+          .repo-search { min-width: 0; width: 100%; padding: 10px 14px; }
+          .repo-search-wrap { width: 100%; }
         }
         .repo-search input {
           background: transparent;
@@ -205,6 +215,9 @@ export function RepositorySelectionPage() {
           min-height: 280px;
           cursor: default;
           transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s ease;
+        }
+        @media (max-width: 560px) {
+          .repo-card { border-radius: 20px; padding: 20px; min-height: 240px; }
         }
         .repo-card:hover {
           transform: translateY(-4px);
@@ -334,6 +347,10 @@ export function RepositorySelectionPage() {
           background: #F4F4F5;
           padding: 80px 48px;
           text-align: center;
+        }
+        @media (max-width: 560px) {
+          .repo-empty { border-radius: 20px; padding: 44px 20px; }
+          .repo-empty p { font-size: 16px; }
         }
         .repo-empty-icon {
           width: 56px; height: 56px;

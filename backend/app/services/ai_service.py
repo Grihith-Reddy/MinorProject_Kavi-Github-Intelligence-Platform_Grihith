@@ -169,6 +169,7 @@ class AIService:
         query: str,
         context_sources: list[dict[str, Any]],
         repo_overview_context: dict[str, Any] | None = None,
+        memory_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         general_query = _looks_general_query(query, context_sources, repo_overview_context)
 
@@ -184,6 +185,7 @@ class AIService:
                 query,
                 context_sources,
                 repo_overview_context,
+                memory_context=memory_context,
                 fallback_reason="insufficient_context",
             )
             return fallback
@@ -193,11 +195,12 @@ class AIService:
                 query,
                 context_sources,
                 repo_overview_context,
+                memory_context=memory_context,
                 fallback_reason="ai_provider_unavailable",
             )
 
         try:
-            structured = self._gemini_chat_structured(query, context_sources, repo_overview_context)
+            structured = self._gemini_chat_structured(query, context_sources, repo_overview_context, memory_context)
             answer = self._format_structured_answer(structured)
             return {"answer": answer, "structured": structured}
         except Exception as exc:
@@ -221,6 +224,7 @@ class AIService:
                 query,
                 context_sources,
                 repo_overview_context,
+                memory_context=memory_context,
                 fallback_reason=fallback_reason,
             )
 
@@ -778,8 +782,10 @@ class AIService:
         query: str,
         context_sources: list[dict[str, Any]],
         repo_overview_context: dict[str, Any] | None,
+        memory_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         compact_sources = self._compact_sources(context_sources)
+        compact_memory = self._compact_memory_context(memory_context)
         prompt = (
             "You are Kavi, a senior engineering assistant.\n"
             "Return STRICT JSON only. No markdown.\n"
@@ -810,9 +816,13 @@ class AIService:
             "8) When file_excerpt is present for a source, use it for code-level reasoning and provide repository code_snippets.\n"
             "9) If the user asks for code generation, include at least one code_snippet with source='generated'.\n"
             "10) Keep code snippets concise and directly relevant.\n\n"
+            "11) Use MEMORY_CONTEXT to resolve follow-up references like 'that', 'continue', or 'same approach'.\n"
+            "12) Prioritize latest user intent over older memory when they conflict.\n"
+            "13) Treat memory as assistant hints; repository claims still require repository evidence.\n\n"
             f"QUESTION:\n{query.strip()}\n\n"
             f"PR_CONTEXT:\n{json.dumps(compact_sources, default=str)}\n\n"
-            f"REPO_OVERVIEW_CONTEXT:\n{json.dumps(repo_overview_context or {}, default=str)}"
+            f"REPO_OVERVIEW_CONTEXT:\n{json.dumps(repo_overview_context or {}, default=str)}\n\n"
+            f"MEMORY_CONTEXT:\n{json.dumps(compact_memory, default=str)}"
         )
         raw = self._call_gemini(
             prompt,
@@ -1598,6 +1608,106 @@ class AIService:
             )
         return compact
 
+    def _compact_memory_context(self, memory_context: dict[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(memory_context, dict):
+            return {}
+
+        conversation = memory_context.get("conversation")
+        recent_messages = memory_context.get("recent_messages") if isinstance(memory_context.get("recent_messages"), list) else []
+        relevant_messages = (
+            memory_context.get("relevant_messages")
+            if isinstance(memory_context.get("relevant_messages"), list)
+            else []
+        )
+        memory_items = memory_context.get("memory_items") if isinstance(memory_context.get("memory_items"), list) else []
+        repo_snapshot = memory_context.get("repo_snapshot") if isinstance(memory_context.get("repo_snapshot"), dict) else {}
+
+        compact_messages: list[dict[str, Any]] = []
+        for row in recent_messages[-8:]:
+            if not isinstance(row, dict):
+                continue
+            compact_messages.append(
+                {
+                    "role": str(row.get("role") or "")[:16],
+                    "content": str(row.get("content") or "")[:420],
+                    "created_at": row.get("created_at"),
+                }
+            )
+
+        compact_relevant: list[dict[str, Any]] = []
+        for row in relevant_messages[:6]:
+            if not isinstance(row, dict):
+                continue
+            compact_relevant.append(
+                {
+                    "role": str(row.get("role") or "")[:16],
+                    "content": str(row.get("content") or "")[:360],
+                    "created_at": row.get("created_at"),
+                }
+            )
+
+        compact_memory_items: list[dict[str, Any]] = []
+        for item in memory_items[:10]:
+            if not isinstance(item, dict):
+                continue
+            compact_memory_items.append(
+                {
+                    "scope": str(item.get("scope") or "")[:24],
+                    "kind": str(item.get("kind") or "")[:48],
+                    "key": str(item.get("key") or "")[:120],
+                    "value": str(item.get("value") or "")[:260],
+                    "confidence": item.get("confidence"),
+                }
+            )
+
+        known_repositories = repo_snapshot.get("known_repositories") if isinstance(repo_snapshot.get("known_repositories"), list) else []
+        recent_pull_requests = (
+            repo_snapshot.get("recent_pull_requests")
+            if isinstance(repo_snapshot.get("recent_pull_requests"), list)
+            else []
+        )
+        hot_files = repo_snapshot.get("hot_files") if isinstance(repo_snapshot.get("hot_files"), list) else []
+
+        return {
+            "conversation": {
+                "id": (conversation or {}).get("id") if isinstance(conversation, dict) else None,
+                "title": str((conversation or {}).get("title") or "")[:120] if isinstance(conversation, dict) else "",
+                "message_count": (conversation or {}).get("message_count") if isinstance(conversation, dict) else 0,
+                "last_message_at": (conversation or {}).get("last_message_at") if isinstance(conversation, dict) else None,
+            },
+            "recent_messages": compact_messages,
+            "relevant_messages": compact_relevant,
+            "memory_items": compact_memory_items,
+            "repo_snapshot": {
+                "known_repositories": [
+                    {
+                        "full_name": str(item.get("full_name") or "")[:220],
+                        "default_branch": str(item.get("default_branch") or "")[:80],
+                        "pr_count": item.get("pr_count"),
+                    }
+                    for item in known_repositories[:10]
+                    if isinstance(item, dict)
+                ],
+                "recent_pull_requests": [
+                    {
+                        "github_pr_number": item.get("github_pr_number"),
+                        "title": str(item.get("title") or "")[:220],
+                        "state": str(item.get("state") or "")[:24],
+                    }
+                    for item in recent_pull_requests[:10]
+                    if isinstance(item, dict)
+                ],
+                "hot_files": [
+                    {
+                        "file_path": str(item.get("file_path") or "")[:260],
+                        "change_count": item.get("change_count"),
+                    }
+                    for item in hot_files[:10]
+                    if isinstance(item, dict)
+                ],
+            },
+        }
+
     def _response_text(self, response: requests.Response) -> str:
         try:
             return (response.text or "").strip()
@@ -1887,6 +1997,7 @@ class AIService:
         query: str,
         context_sources: list[dict[str, Any]],
         repo_overview_context: dict[str, Any] | None,
+        memory_context: dict[str, Any] | None = None,
         fallback_reason: str = "ai_provider_unavailable",
     ) -> dict[str, Any]:
         query_text = str(query or "")
@@ -1936,8 +2047,11 @@ class AIService:
             max_items=3,
         ) if (prefer_code_snippets or generation_requested) else []
         repo_context = repo_overview_context if isinstance(repo_overview_context, dict) else {}
+        compact_memory = self._compact_memory_context(memory_context)
+        memory_messages = compact_memory.get("recent_messages") if isinstance(compact_memory.get("recent_messages"), list) else []
+        memory_items = compact_memory.get("memory_items") if isinstance(compact_memory.get("memory_items"), list) else []
 
-        if general_query and not context_sources and not repo_context:
+        if general_query and not context_sources and not repo_context and not memory_messages and not memory_items:
             structured = {
                 "title": "General Engineering Answer",
                 "summary": "General guidance generated without repository-specific evidence.",
@@ -2073,6 +2187,36 @@ class AIService:
                             }
                         )
 
+        if memory_items:
+            memory_bullets: list[str] = []
+            for item in memory_items[:5]:
+                if not isinstance(item, dict):
+                    continue
+                kind = str(item.get("kind") or "").replace("_", " ").strip()
+                key = str(item.get("key") or "").strip()
+                value = str(item.get("value") or "").strip()
+                if kind and key and value:
+                    memory_bullets.append(f"{kind}: {key} -> {value[:160]}")
+                elif value:
+                    memory_bullets.append(value[:220])
+            if memory_bullets:
+                sections.append({"heading": "Conversation Memory", "bullets": memory_bullets[:5]})
+
+        if memory_messages:
+            latest_memory = memory_messages[-1] if isinstance(memory_messages[-1], dict) else {}
+            last_role = str(latest_memory.get("role") or "").strip()
+            last_content = str(latest_memory.get("content") or "").strip()
+            if last_content:
+                sections.append(
+                    {
+                        "heading": "Recent Context",
+                        "bullets": [
+                            f"Last remembered turn ({last_role or 'message'}): {last_content[:220]}",
+                            "Follow-up intent was resolved using recent conversation memory.",
+                        ],
+                    }
+                )
+
         if not sections:
             sections = [
                 {
@@ -2124,6 +2268,8 @@ class AIService:
             limitations.append("Indexed context is still limited for this repository.")
         elif prefer_code_refs:
             limitations.append("Line-level citations are limited when source mappings are incomplete.")
+        if memory_items or memory_messages:
+            limitations.append("Conversation memory was used to resolve follow-up context; confirm if priorities changed.")
 
         structured = {
             "title": default_title,

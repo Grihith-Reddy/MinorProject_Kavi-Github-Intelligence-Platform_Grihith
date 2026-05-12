@@ -101,6 +101,14 @@ interface CodeSnippet {
 interface StructuredAnswer { title?: string; summary?: string; sections?: StructuredSection[]; code_references?: CodeReference[]; code_snippets?: CodeSnippet[]; timeline_highlights?: TimelineHighlight[]; limitations?: string[] }
 interface ChatEntry { role: 'user' | 'assistant'; content: string; structured?: StructuredAnswer | null }
 interface ChatSource { [key: string]: unknown }
+interface ChatConversationSummary {
+  id: string
+  repo_id?: string
+  title?: string
+  status?: string
+  message_count?: number
+  last_message_at?: string
+}
 interface KnowledgeFileRow { file_path: string; reference_count?: number }
 interface KnowledgeEntryRow {
   id?: string
@@ -111,7 +119,15 @@ interface KnowledgeEntryRow {
   pr_state?: string
   created_at?: string
 }
-interface ChatQueryResponse { answer?: string; answer_structured?: StructuredAnswer | null; sources?: ChatSource[]; context?: ChatSource[]; mode?: ChatMode }
+interface ChatQueryResponse {
+  answer?: string
+  answer_structured?: StructuredAnswer | null
+  sources?: ChatSource[]
+  context?: ChatSource[]
+  mode?: ChatMode
+  conversation_id?: string | null
+  conversation?: ChatConversationSummary | null
+}
 interface WorkspaceRenderProps { repoId: string; repositoryName: string; messages: ChatEntry[]; chatLoading: boolean; chatInput: string; setChatInput: (v: string) => void; chatSources: ChatSource[]; entries: KnowledgeEntryRow[]; files: KnowledgeFileRow[]; entriesLoading: boolean; entriesError: Error | null; filesLoading: boolean; filesError: Error | null; noPrContext: boolean; onSend: (input: string) => void; messagesEndRef: RefObject<HTMLDivElement>; streamingIndex: number | null; onAssistantStreamComplete: (index: number) => void; gitVisualization: GitVisualizationResponse | null; gitVisualizationLoading: boolean; gitVisualizationError: Error | null }
 interface WorkspaceOverlayProps { repoId: string; repositoryName: string; entries: KnowledgeEntryRow[]; files: KnowledgeFileRow[]; chatSources: ChatSource[]; entriesLoading: boolean; entriesError: Error | null; filesLoading: boolean; filesError: Error | null; onNavigate?: () => void; gitVisualization: GitVisualizationResponse | null; gitVisualizationLoading: boolean; gitVisualizationError: Error | null }
 interface DashboardChatPaneProps { messages: ChatEntry[]; chatLoading: boolean; chatInput: string; setChatInput: (v: string) => void; noPrContext: boolean; onSend: (input: string) => void; messagesEndRef: RefObject<HTMLDivElement>; streamingIndex: number | null; onAssistantStreamComplete: (index: number) => void }
@@ -624,7 +640,9 @@ function CodeSnippetCard({ snippet, index }: { snippet: CodeSnippet; index: numb
         document.execCommand('copy')
         document.body.removeChild(probe)
       }
-    } catch {}
+    } catch {
+      // Clipboard writes can fail in unsupported browsers or denied permissions.
+    }
   }
 
   const language = snippetLanguageLabel(snippet.language)
@@ -739,7 +757,7 @@ function StructuredAssistantBody({ content, structured }: { content: string; str
       {Array.isArray(structured.code_references) && structured.code_references.length > 0 && (
         <div>
           <p style={{ fontFamily: "'Gabarito', sans-serif", fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(24,29,31,0.45)', marginBottom: 8 }}>Code References</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div className="db-code-ref-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {structured.code_references.slice(0, 6).map((ref, i) => (
               <div key={`${ref.file_path}-${i}`} style={{ borderRadius: 12, border: '1px solid #E7E7E9', background: '#F9F9FA', padding: '10px 12px' }}>
                 <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 12, fontWeight: 600, color: '#181D1F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{splitFilePath(ref.file_path).fileName}</p>
@@ -796,7 +814,7 @@ function StructuredAssistantBody({ content, structured }: { content: string; str
 
 function WorkspaceIconRail({ activePanel, onToggle }: { activePanel: WorkspacePanelId | null; onToggle: (panel: WorkspacePanelId) => void }) {
   return (
-    <aside style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '12px 8px', background: '#F4F4F5', borderRadius: 24, border: '1px solid #E7E7E9' }}>
+    <aside className="db-icon-rail" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '12px 8px', background: '#F4F4F5', borderRadius: 24, border: '1px solid #E7E7E9' }}>
       {WORKSPACE_PANEL_ITEMS.map((item) => {
         const Icon = item.icon
         const active = activePanel === item.id
@@ -857,7 +875,7 @@ function WorkspaceOverlayPanel({
         <p style={labelStyle}>Repository</p>
         <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 15, fontWeight: 600, color: '#181D1F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shortRepo}</p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+      <div className="db-repo-stats-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {[['PR Contexts', entries.length], ['Indexed Files', files.length]].map(([label, value]) => (
           <div key={label as string} style={{ borderRadius: 14, border: '1px solid #E7E7E9', background: '#F9F9FA', padding: '10px 14px' }}>
             <p style={{ fontFamily: "'Gabarito', sans-serif", fontSize: 11, color: 'rgba(24,29,31,0.5)', marginBottom: 4 }}>{label}</p>
@@ -973,9 +991,9 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
   }, [scrollToAssistantStart, streamingIndex])
 
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: '#F4F4F5', borderRadius: 24, border: '1px solid #E7E7E9', overflow: 'hidden' }}>
+    <section className="db-chat-pane" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: '#F4F4F5', borderRadius: 24, border: '1px solid #E7E7E9', overflow: 'hidden' }}>
       {/* Messages */}
-      <div ref={messagesContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12, scrollbarWidth: 'none' }}>
+      <div className="db-chat-messages" ref={messagesContainerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12, scrollbarWidth: 'none' }}>
 
         {noPrContext && (
           <div style={{ borderRadius: 16, border: '1px solid #E7E7E9', background: '#fff', padding: '14px 18px' }}>
@@ -998,9 +1016,10 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
                 if (message.role !== 'assistant') return
                 assistantMessageRefs.current[index] = node
               }}
+              className={`db-message-row ${message.role === 'user' ? 'is-user' : 'is-assistant'}`}
               style={{ display: 'flex', justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start' }}
             >
-              <div style={{
+              <div className={`db-message-bubble ${message.role === 'user' ? 'is-user' : 'is-assistant'}`} style={{
                 maxWidth: message.role === 'user' ? 'min(75%, 560px)' : 'min(88%, 760px)',
                 borderRadius: message.role === 'user' ? '20px 20px 6px 20px' : '20px 20px 20px 6px',
                 padding: '12px 16px',
@@ -1042,9 +1061,9 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
       </div>
 
       {/* Quick prompts + input */}
-      <div style={{ padding: '8px 16px 14px', flexShrink: 0 }}>
+      <div className="db-chat-compose" style={{ padding: '8px 16px 14px', flexShrink: 0 }}>
         {/* Quick prompts */}
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 8, scrollbarWidth: 'none' }}>
+        <div className="db-quick-prompt-row" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 8, scrollbarWidth: 'none' }}>
           {QUICK_PROMPTS.map((prompt) => (
             <button
               key={prompt}
@@ -1060,11 +1079,13 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
 
         {/* Input bar */}
         <div
+          className="db-chat-input-row"
           style={{ display: 'flex', alignItems: 'flex-end', gap: 10, background: '#fff', border: '1.5px solid #E7E7E9', borderRadius: 20, padding: '10px 10px 10px 16px', boxShadow: '0 2px 8px rgba(24,29,31,0.06)', transition: 'border-color 0.15s' }}
           onFocusCapture={(e) => (e.currentTarget.style.borderColor = '#181D1F')}
           onBlurCapture={(e) => (e.currentTarget.style.borderColor = '#E7E7E9')}
         >
           <textarea
+            className="db-chat-textarea"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(chatInput) } }}
@@ -1074,6 +1095,7 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
             style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', boxShadow: 'none', fontFamily: "'Archivo', sans-serif", fontSize: 14, color: '#181D1F', background: 'transparent', minHeight: 24, maxHeight: 120, lineHeight: 1.5, padding: 0 }}
           />
           <button
+            className="db-send-btn"
             type="button"
             onClick={() => onSend(chatInput)}
             disabled={chatLoading || !chatInput.trim()}
@@ -1084,7 +1106,101 @@ function DashboardChatPane({ messages, chatLoading, chatInput, setChatInput, noP
         </div>
       </div>
 
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } @keyframes kavi-cursor-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } } textarea:focus { outline: none !important; box-shadow: none !important; }`}</style>
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes kavi-cursor-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        textarea:focus { outline: none !important; box-shadow: none !important; }
+
+        @media (max-width: 1024px) {
+          .db-code-ref-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+        @media (max-width: 820px) {
+          .db-workspace-shell {
+            inset: 78px 10px 10px !important;
+          }
+
+          .db-workspace-grid {
+            grid-template-columns: 1fr !important;
+            grid-template-rows: auto minmax(0, 1fr);
+            gap: 10px !important;
+          }
+
+          .db-icon-rail {
+            flex-direction: row !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            width: 100%;
+            border-radius: 16px !important;
+            padding: 8px !important;
+          }
+
+          .db-icon-rail button {
+            width: 36px !important;
+            height: 36px !important;
+            border-radius: 12px !important;
+          }
+
+          .db-chat-pane {
+            border-radius: 18px !important;
+          }
+
+          .db-chat-messages {
+            padding: 14px 12px 8px !important;
+          }
+
+          .db-message-bubble {
+            max-width: min(94%, 760px) !important;
+            padding: 10px 12px !important;
+            font-size: 13px !important;
+          }
+
+          .db-chat-compose {
+            padding: 6px 10px 10px !important;
+          }
+
+          .db-chat-input-row {
+            border-radius: 16px !important;
+            padding: 8px 8px 8px 12px !important;
+            gap: 8px !important;
+          }
+
+          .db-chat-textarea {
+            font-size: 13px !important;
+          }
+
+          .db-send-btn {
+            width: 34px !important;
+            height: 34px !important;
+            border-radius: 10px !important;
+          }
+
+          .db-overlay-panel {
+            left: 0 !important;
+            right: 0 !important;
+            width: 100% !important;
+            border-radius: 18px !important;
+            inset-block: 46px 0 !important;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .db-workspace-shell {
+            inset: 74px 6px 8px !important;
+          }
+
+          .db-quick-prompt-row button {
+            font-size: 12px !important;
+            padding: 6px 11px !important;
+          }
+
+          .db-repo-stats-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </section>
   )
 }
@@ -1105,10 +1221,10 @@ function DashboardWorkspaceV2(props: WorkspaceRenderProps) {
   const handlePanelToggle = (panel: WorkspacePanelId) => setActivePanel((c) => (c === panel ? null : panel))
 
   return (
-    <div style={{ position: 'fixed', inset: '90px 16px 16px', zIndex: 20 }}>
-      <div style={{ position: 'relative', height: '100%', maxWidth: 1440, margin: '0 auto' }}>
+    <div className="db-workspace-shell" style={{ position: 'fixed', inset: '90px 16px 16px', zIndex: 20 }}>
+      <div className="db-workspace-inner" style={{ position: 'relative', height: '100%', maxWidth: 1440, margin: '0 auto' }}>
         {/* Main layout: icon rail + chat */}
-        <div style={{ display: 'grid', gridTemplateColumns: '54px minmax(0,1fr)', gap: 12, height: '100%', minHeight: 0 }}>
+        <div className="db-workspace-grid" style={{ display: 'grid', gridTemplateColumns: '54px minmax(0,1fr)', gap: 12, height: '100%', minHeight: 0 }}>
           <WorkspaceIconRail activePanel={activePanel} onToggle={handlePanelToggle} />
           <DashboardChatPane
             messages={props.messages}
@@ -1143,6 +1259,7 @@ function DashboardWorkspaceV2(props: WorkspaceRenderProps) {
                 animate={{ x: 0 }}
                 exit={{ x: '-100%' }}
                 transition={{ type: 'spring', stiffness: 300, damping: 34, mass: 0.78 }}
+                className="db-overlay-panel"
                 style={{
                   position: 'absolute', insetBlock: 0, left: 62,
                   width: 'min(400px, calc(100% - 70px))',
@@ -1219,6 +1336,7 @@ export function DashboardPage() {
   const [chatLoading, setChatLoading] = useState(false)
   const [chatInput, setChatInput] = useState('')
   const [chatSources, setChatSources] = useState<ChatSource[]>([])
+  const [chatConversationId, setChatConversationId] = useState<string | null>(null)
   const [chatHydrated, setChatHydrated] = useState(false)
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null)
 
@@ -1229,32 +1347,50 @@ export function DashboardPage() {
   useEffect(() => {
     if (!queryRepoId) return
     setStoredRepoId(queryRepoId)
-    try { window.localStorage.setItem(ACTIVE_REPO_STORAGE_KEY, queryRepoId) } catch {}
+    try {
+      window.localStorage.setItem(ACTIVE_REPO_STORAGE_KEY, queryRepoId)
+    } catch {
+      // Ignore localStorage write errors in restricted browser environments.
+    }
   }, [queryRepoId])
 
   useEffect(() => {
     setChatHydrated(false)
     hasInitialPositionedRef.current = false
-    if (!chatStorageKey) { setMessages(defaultMessages(welcomeName)); setChatSources([]); setChatHydrated(true); return }
+    if (!chatStorageKey) { setMessages(defaultMessages(welcomeName)); setChatSources([]); setChatConversationId(null); setChatHydrated(true); return }
     try {
       const raw = window.localStorage.getItem(chatStorageKey)
-      if (!raw) { setMessages(defaultMessages(welcomeName)); setChatSources([]); setChatHydrated(true); return }
-      const parsed = JSON.parse(raw) as { messages?: unknown; chatSources?: unknown }
+      if (!raw) { setMessages(defaultMessages(welcomeName)); setChatSources([]); setChatConversationId(null); setChatHydrated(true); return }
+      const parsed = JSON.parse(raw) as { messages?: unknown; chatSources?: unknown; conversationId?: unknown }
       const persistedMessages = Array.isArray(parsed.messages)
         ? parsed.messages.filter((item): item is ChatEntry => Boolean(item) && typeof item === 'object' && (item as ChatEntry).role !== undefined && ((item as ChatEntry).role === 'assistant' || (item as ChatEntry).role === 'user') && typeof (item as ChatEntry).content === 'string')
             .map((item) => ({ role: item.role, content: item.content, structured: item.structured && typeof item.structured === 'object' ? (item.structured as StructuredAnswer) : undefined }))
         : []
       const persistedSources = Array.isArray(parsed.chatSources) ? parsed.chatSources : []
+      const persistedConversationId = typeof parsed.conversationId === 'string' && parsed.conversationId.trim() ? parsed.conversationId.trim() : null
       setMessages(persistedMessages.length ? persistedMessages : defaultMessages(welcomeName))
       setChatSources(persistedSources as ChatSource[])
-    } catch { setMessages(defaultMessages(welcomeName)); setChatSources([]) }
+      setChatConversationId(persistedConversationId)
+    } catch { setMessages(defaultMessages(welcomeName)); setChatSources([]); setChatConversationId(null) }
     finally { setChatHydrated(true) }
   }, [chatStorageKey, welcomeName])
 
   useEffect(() => {
     if (!chatStorageKey || !chatHydrated) return
-    try { window.localStorage.setItem(chatStorageKey, JSON.stringify({ messages, chatSources, updatedAt: new Date().toISOString() })) } catch {}
-  }, [chatStorageKey, chatHydrated, messages, chatSources])
+    try {
+      window.localStorage.setItem(
+        chatStorageKey,
+        JSON.stringify({
+          messages,
+          chatSources,
+          conversationId: chatConversationId,
+          updatedAt: new Date().toISOString(),
+        })
+      )
+    } catch {
+      // Persisted chat state is best-effort; continue without blocking UI updates.
+    }
+  }, [chatStorageKey, chatHydrated, messages, chatSources, chatConversationId])
 
   useEffect(() => {
     if (!chatHydrated || hasInitialPositionedRef.current) return
@@ -1279,7 +1415,7 @@ export function DashboardPage() {
     setChatLoading(true)
     scrollToLatestMessage('smooth')
     try {
-      const data = (await queryChat(api, repoId, trimmed, mode)) as ChatQueryResponse
+      const data = (await queryChat(api, repoId, trimmed, mode, chatConversationId)) as ChatQueryResponse
       const newAssistantMsg: ChatEntry = {
         role: 'assistant',
         content: data.answer || "I couldn't generate an answer.",
@@ -1294,6 +1430,9 @@ export function DashboardPage() {
       if (Array.isArray(data.sources)) setChatSources(data.sources)
       else if (Array.isArray(data.context)) setChatSources(data.context)
       else setChatSources([])
+      if (typeof data.conversation_id === 'string' && data.conversation_id.trim()) {
+        setChatConversationId(data.conversation_id.trim())
+      }
     } catch {
       setMessages((prev) => {
         const next = [...prev, { role: 'assistant' as const, content: 'An error occurred while processing your query.' }]

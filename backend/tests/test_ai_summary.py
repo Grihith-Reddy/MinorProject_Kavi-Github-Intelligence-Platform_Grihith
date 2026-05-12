@@ -147,6 +147,30 @@ class AISummaryTests(unittest.TestCase):
         refs = structured.get("code_references") or []
         self.assertTrue(refs)
 
+    def test_fallback_chat_includes_memory_sections_when_memory_available(self):
+        payload = self.service._fallback_chat_payload(
+            query="continue with the same approach",
+            context_sources=[],
+            repo_overview_context=None,
+            memory_context={
+                "recent_messages": [
+                    {"role": "user", "content": "We are migrating auth middleware to JWT."},
+                ],
+                "memory_items": [
+                    {
+                        "scope": "conversation",
+                        "kind": "active_task",
+                        "key": "current_task",
+                        "value": "Migrate auth middleware to JWT tokens.",
+                    }
+                ],
+            },
+        )
+        structured = payload.get("structured") or {}
+        section_titles = [str(section.get("heading") or "") for section in (structured.get("sections") or [])]
+        self.assertIn("Conversation Memory", section_titles)
+        self.assertIn("Recent Context", section_titles)
+
 
 if __name__ == "__main__":
     unittest.main()

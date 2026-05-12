@@ -88,6 +88,10 @@ class Settings(BaseSettings):
                 raise RuntimeError("FRONTEND_URL must be set to at least one production origin")
             if any("localhost" in origin or "127.0.0.1" in origin for origin in origins):
                 raise RuntimeError("Production FRONTEND_URL must not include localhost origins")
+            if any(not origin.lower().startswith("https://") for origin in origins):
+                raise RuntimeError("Production FRONTEND_URL origins must use HTTPS")
+            if not self.GITHUB_OAUTH_REDIRECT_URI.lower().startswith("https://"):
+                raise RuntimeError("Production GITHUB_OAUTH_REDIRECT_URI must use HTTPS")
 
     def _validate_secret(self, name: str, value: str) -> None:
         if value.strip().lower() in {"", "change-me", "changeme", "replace-me"}:

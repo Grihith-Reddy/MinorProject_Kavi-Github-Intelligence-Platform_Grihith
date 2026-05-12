@@ -4,7 +4,7 @@ from typing import Any
 import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -15,6 +15,15 @@ from app.core.database import get_db
 from app.core.security import UserContext, decrypt_token, get_current_user
 from app.services.ai_service import AIService
 from app.services.github_service import GitHubService
+from app.services.memory_service import (
+    append_chat_message,
+    build_memory_context,
+    ensure_chat_conversation,
+    extract_turn_memory_items,
+    get_conversation_with_messages,
+    list_conversations,
+    upsert_memory_items,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -112,6 +121,30 @@ class ChatQuery(BaseModel):
     query: str
     limit: int = Field(default=5, ge=1, le=15)
     mode: str | None = None
+    conversation_id: str | None = None
+
+
+def _ensure_user_id(db: Session, current_user: UserContext) -> str:
+    result = db.execute(
+        text(
+            """
+            INSERT INTO users (id, auth0_sub, email, name)
+            VALUES (gen_random_uuid(), :auth0_sub, :email, :name)
+            ON CONFLICT (auth0_sub)
+            DO UPDATE SET
+                email = EXCLUDED.email,
+                name = EXCLUDED.name,
+                updated_at = NOW()
+            RETURNING id
+            """
+        ),
+        {
+            "auth0_sub": current_user.sub,
+            "email": current_user.email,
+            "name": current_user.name,
+        },
+    ).fetchone()
+    return str(result[0])
 
 
 def _resolve_mode(query: str, mode: str | None) -> str:
@@ -1239,6 +1272,59 @@ def _build_repo_overview_context(
     return context
 
 
+@router.get("/conversations")
+def list_chat_conversations(
+    repo_id: str = Query(...),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    assert_repo_access(db, repo_id, current_user.sub)
+    user_id = _ensure_user_id(db, current_user)
+    db.commit()
+    conversations = list_conversations(db, user_id=user_id, repo_id=repo_id, limit=limit)
+    audit_log(
+        "chat.conversations.listed",
+        auth0_sub=current_user.sub,
+        repo_id=repo_id,
+        count=len(conversations),
+    )
+    return {"conversations": conversations}
+
+
+@router.get("/conversations/{conversation_id}")
+def chat_conversation_detail(
+    conversation_id: str,
+    limit: int = Query(200, ge=1, le=800),
+    current_user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user_id = _ensure_user_id(db, current_user)
+    db.commit()
+    payload = get_conversation_with_messages(
+        db,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        limit=limit,
+    )
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+
+    repo_id = str((payload.get("conversation") or {}).get("repo_id") or "")
+    if not repo_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation repository not found")
+    assert_repo_access(db, repo_id, current_user.sub)
+
+    audit_log(
+        "chat.conversation.detail",
+        auth0_sub=current_user.sub,
+        repo_id=repo_id,
+        conversation_id=conversation_id,
+        message_count=len(payload.get("messages") or []),
+    )
+    return payload
+
+
 @router.post("/query")
 def chat_query(
     payload: ChatQuery,
@@ -1251,6 +1337,54 @@ def chat_query(
 
     mode = _resolve_mode(query_text, payload.mode)
     repo_meta = assert_repo_access(db, payload.repo_id, current_user.sub)
+    user_id = _ensure_user_id(db, current_user)
+    db.commit()
+
+    conversation: dict[str, Any] | None = None
+    user_message_id: str | None = None
+    memory_context: dict[str, Any] | None = None
+    try:
+        conversation = ensure_chat_conversation(
+            db,
+            user_id=user_id,
+            repo_id=payload.repo_id,
+            conversation_id=payload.conversation_id,
+            seed_query=query_text,
+        )
+        user_message = append_chat_message(
+            db,
+            conversation_id=str(conversation.get("id") or ""),
+            user_id=user_id,
+            repo_id=payload.repo_id,
+            role="user",
+            content=query_text,
+            mode=mode,
+        )
+        user_message_id = str(user_message.get("id") or "")
+        db.commit()
+        memory_context = build_memory_context(
+            db,
+            user_id=user_id,
+            repo_id=payload.repo_id,
+            conversation=conversation,
+            query=query_text,
+            exclude_message_ids=[user_message_id] if user_message_id else None,
+            recent_limit=12,
+            relevant_limit=8,
+            memory_limit=16,
+        )
+    except Exception:
+        db.rollback()
+        logger.warning("Chat memory context unavailable; continuing without persisted memory", exc_info=True)
+        conversation = conversation or {
+            "id": payload.conversation_id,
+            "repo_id": payload.repo_id,
+            "title": None,
+            "status": "active",
+            "message_count": 0,
+            "last_message_at": None,
+        }
+        memory_context = None
 
     entries = (
         _fetch_repo_overview_entries(db, payload.repo_id, limit=max(payload.limit, 18))
@@ -1358,9 +1492,53 @@ def chat_query(
         audit_log("chat.query.empty_context", auth0_sub=current_user.sub, repo_id=payload.repo_id, mode=mode)
 
     ai_service = AIService()
-    ai_payload = ai_service.generate_chat_payload(query_text, sources, repo_overview_context)
+    ai_payload = ai_service.generate_chat_payload(query_text, sources, repo_overview_context, memory_context=memory_context)
     answer = str(ai_payload.get("answer") or "")
     answer_structured = ai_payload.get("structured")
+
+    assistant_message_id: str | None = None
+    if conversation and str(conversation.get("id") or "").strip():
+        try:
+            assistant_message = append_chat_message(
+                db,
+                conversation_id=str(conversation.get("id")),
+                user_id=user_id,
+                repo_id=payload.repo_id,
+                role="assistant",
+                content=answer,
+                mode=mode,
+                answer_structured=answer_structured if isinstance(answer_structured, dict) else None,
+                sources=sources,
+            )
+            assistant_message_id = str(assistant_message.get("id") or "")
+
+            memory_items = extract_turn_memory_items(
+                query=query_text,
+                answer=answer,
+                structured=answer_structured if isinstance(answer_structured, dict) else None,
+                sources=sources,
+                repo_meta=repo_meta,
+            )
+            upsert_memory_items(
+                db,
+                user_id=user_id,
+                repo_id=payload.repo_id,
+                conversation_id=str(conversation.get("id")),
+                source_message_id=assistant_message_id or user_message_id,
+                memory_items=memory_items,
+            )
+            db.commit()
+            refreshed_conversation = ensure_chat_conversation(
+                db,
+                user_id=user_id,
+                repo_id=payload.repo_id,
+                conversation_id=str(conversation.get("id")),
+            )
+            if refreshed_conversation:
+                conversation = refreshed_conversation
+        except Exception:
+            db.rollback()
+            logger.warning("Unable to persist assistant memory payload", exc_info=True)
 
     audit_log(
         "chat.query.completed",
@@ -1368,11 +1546,29 @@ def chat_query(
         repo_id=payload.repo_id,
         source_count=len(sources),
         mode=mode,
+        conversation_id=str((conversation or {}).get("id") or ""),
+        memory_applied=bool(memory_context),
     )
+
+    conversation_payload = None
+    if conversation and str(conversation.get("id") or "").strip():
+        conversation_payload = {
+            "id": str(conversation.get("id")),
+            "repo_id": str(conversation.get("repo_id") or payload.repo_id),
+            "title": str(conversation.get("title") or "").strip() or "Conversation",
+            "status": str(conversation.get("status") or "active"),
+            "message_count": int(conversation.get("message_count") or 0),
+            "last_message_at": conversation.get("last_message_at"),
+        }
+
     return {
         "answer": answer,
         "answer_structured": answer_structured,
         "sources": sources,
         "context": sources,
         "mode": mode,
+        "conversation_id": (conversation_payload or {}).get("id"),
+        "conversation": conversation_payload,
+        "memory_applied": bool(memory_context),
+        "assistant_message_id": assistant_message_id,
     }

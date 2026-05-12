@@ -19,6 +19,14 @@ class RetryableGitHubError(Exception):
     pass
 
 
+def _response_excerpt(response: requests.Response, max_chars: int = 400) -> str:
+    try:
+        raw = str(response.text or "").strip()
+    except Exception:
+        return ""
+    return " ".join(raw.split())[:max_chars]
+
+
 class GitHubService:
     def __init__(self, token: str):
         self.token = token
@@ -72,9 +80,25 @@ class GitHubService:
             raise RetryableGitHubError(f"Retryable GitHub API error: {response.status_code}")
 
         if response.status_code >= 400:
+            logger.warning(
+                "GitHub API request failed",
+                extra={
+                    "status_code": response.status_code,
+                    "url": url,
+                    "response_excerpt": _response_excerpt(response),
+                },
+            )
+            if response.status_code == 401:
+                detail = "GitHub authentication failed"
+            elif response.status_code == 403:
+                detail = "GitHub request forbidden"
+            elif response.status_code == 404:
+                detail = "GitHub resource not found"
+            else:
+                detail = "GitHub API request failed"
             raise HTTPException(
                 status_code=response.status_code,
-                detail=f"GitHub API error: {response.text}",
+                detail=detail,
             )
 
         github_circuit_breaker.record_success()
@@ -302,9 +326,16 @@ def exchange_code_for_token(code: str) -> dict[str, Any]:
         raise RetryableGitHubError(f"Retryable GitHub OAuth error: {response.status_code}")
 
     if response.status_code >= 400:
+        logger.warning(
+            "GitHub OAuth exchange failed",
+            extra={
+                "status_code": response.status_code,
+                "response_excerpt": _response_excerpt(response),
+            },
+        )
         raise HTTPException(
             status_code=response.status_code,
-            detail=f"GitHub OAuth error: {response.text}",
+            detail="GitHub OAuth exchange failed",
         )
 
     github_circuit_breaker.record_success()
@@ -336,9 +367,16 @@ def get_authenticated_user(token: str) -> dict[str, Any]:
         raise RetryableGitHubError(f"Retryable GitHub user fetch error: {response.status_code}")
 
     if response.status_code >= 400:
+        logger.warning(
+            "GitHub authenticated user lookup failed",
+            extra={
+                "status_code": response.status_code,
+                "response_excerpt": _response_excerpt(response),
+            },
+        )
         raise HTTPException(
             status_code=response.status_code,
-            detail=f"GitHub user fetch error: {response.text}",
+            detail="GitHub user lookup failed",
         )
 
     github_circuit_breaker.record_success()

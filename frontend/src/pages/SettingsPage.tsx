@@ -23,12 +23,19 @@ export function SettingsPage() {
         @media (max-width: 900px) { .st-layout { grid-template-columns: 1fr; } }
         .st-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         @media (max-width: 600px) { .st-fields { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) {
+          .st-hero-card { padding: 28px 20px !important; border-radius: 20px !important; }
+          .st-profile-card { padding: 18px 16px !important; border-radius: 20px !important; }
+          .st-session-card,
+          .st-about-card { padding: 16px !important; border-radius: 20px !important; }
+        }
       `}</style>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="st-page" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Hero ── */}
         <motion.section
+          className="st-hero-card"
           style={{ ...CARD, background: '#DCEEEF', border: 'none', padding: '40px 48px' }}
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -43,6 +50,7 @@ export function SettingsPage() {
 
           {/* ── Profile card ── */}
           <motion.section
+            className="st-profile-card"
             style={CARD}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -89,6 +97,7 @@ export function SettingsPage() {
 
             {/* Session */}
             <motion.section
+              className="st-session-card"
               style={{ ...CARD, background: '#E4EED2', border: 'none', padding: '20px 24px' }}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -108,6 +117,7 @@ export function SettingsPage() {
 
             {/* About Kavi */}
             <motion.section
+              className="st-about-card"
               style={{ ...CARD, padding: '20px 24px' }}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}

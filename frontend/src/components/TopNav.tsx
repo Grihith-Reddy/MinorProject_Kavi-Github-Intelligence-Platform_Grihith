@@ -39,7 +39,11 @@ export function TopNav() {
     const queryRepoId = new URLSearchParams(location.search).get('repoId')
     if (!queryRepoId) return
     setStoredRepoId(queryRepoId)
-    try { window.localStorage.setItem(ACTIVE_REPO_STORAGE_KEY, queryRepoId) } catch {}
+    try {
+      window.localStorage.setItem(ACTIVE_REPO_STORAGE_KEY, queryRepoId)
+    } catch {
+      // Ignore write failures in private browsing modes or restricted environments.
+    }
   }, [location.search])
 
   const resolveNavTarget = (path: string) => {
@@ -161,6 +165,34 @@ export function TopNav() {
           color: #fff;
         }
         .kavi-nav-btn:hover { background: #2d3748; }
+
+        @media (max-width: 560px) {
+          .kavi-topnav-inner {
+            padding: 6px 6px 6px 10px;
+          }
+          .kavi-nav-logomark {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+          }
+          .kavi-nav-logoname {
+            font-size: 16px;
+            letter-spacing: 0.04em;
+          }
+          .kavi-nav-btn {
+            font-size: 13px;
+            padding: 8px 12px;
+            gap: 5px;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .kavi-nav-logoname { display: none; }
+          .kavi-nav-btn {
+            font-size: 12px;
+            padding: 7px 10px;
+          }
+        }
       `}</style>
 
       <header className="kavi-topnav-wrap">

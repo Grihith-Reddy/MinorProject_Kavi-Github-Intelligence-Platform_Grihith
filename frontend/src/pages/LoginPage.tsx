@@ -193,6 +193,24 @@ export function LoginPage() {
           .login-card { border-radius: 20px; }
         }
 
+        @media (max-width: 480px) {
+          .login-page { padding: 8px; }
+          .login-card {
+            border-radius: 16px;
+            padding: 18px 8px;
+          }
+          .login-inner {
+            border-radius: 18px;
+          }
+          .login-left { padding: 24px 16px 0; }
+          .login-right { padding: 14px 16px 20px; }
+          .login-title { font-size: 22px; }
+          .login-subtitle { margin-bottom: 22px; }
+          .login-logo { margin-bottom: 22px; }
+          .login-input { font-size: 13px; padding: 11px 0; }
+          .login-submit { padding: 12px 18px; font-size: 14px; }
+        }
+
         /* Logo */
         .login-logo {
           display: flex;

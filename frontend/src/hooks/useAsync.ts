@@ -26,6 +26,8 @@ export function useAsync<T>(asyncFn: () => Promise<T>, deps: unknown[] = []) {
     return () => {
       active = false
     }
+    // The hook intentionally accepts a caller-provided dependency list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
 
   return { data, error, loading, setData }

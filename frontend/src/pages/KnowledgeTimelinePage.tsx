@@ -57,12 +57,19 @@ export function KnowledgeTimelinePage() {
         @media (max-width: 500px) { .tl-stats { grid-template-columns: 1fr 1fr; } }
         .tl-main { grid-template-columns: minmax(0,1fr) 300px; align-items: start; }
         @media (max-width: 1024px) { .tl-main { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) {
+          .tl-hero-card { padding: 26px 18px 30px !important; border-radius: 20px !important; min-height: 0 !important; }
+          .tl-stat-card { padding: 16px 14px !important; border-radius: 18px !important; }
+          .tl-main-card { padding: 18px 16px !important; border-radius: 20px !important; }
+          .tl-side-card { padding: 16px !important; border-radius: 20px !important; }
+        }
       `}</style>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Hero card ── */}
         <motion.section
+          className="tl-hero-card"
           style={{ ...CARD, background: 'linear-gradient(170deg,#15aeea 0%,#73cef2 100%)', border: 'none', padding: '48px 48px 56px', position: 'relative', overflow: 'hidden', minHeight: 200 }}
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -98,6 +105,7 @@ export function KnowledgeTimelinePage() {
               ].map(({ label, value, bg }, i) => (
                 <motion.article
                   key={label}
+                  className="tl-stat-card"
                   style={{ borderRadius: 24, background: bg, padding: '20px 24px', border: '1px solid rgba(24,29,31,0.06)' }}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -110,7 +118,7 @@ export function KnowledgeTimelinePage() {
             </div>
 
             {/* ── Monthly activity ── */}
-            <section style={{ ...CARD }}>
+            <section className="tl-main-card" style={{ ...CARD }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
                 <Activity size={16} color="#181D1F" strokeWidth={1.5} />
                 <p style={{ fontFamily: "'Archivo', sans-serif", fontSize: 16, fontWeight: 600, color: '#181D1F' }}>Monthly Evolution</p>
@@ -150,6 +158,7 @@ export function KnowledgeTimelinePage() {
                 {milestones.length ? milestones.map((item: any, index: number) => (
                   <motion.article
                     key={item.id ?? index}
+                    className="tl-main-card"
                     style={{ ...CARD, padding: '24px 28px' }}
                     initial={{ opacity: 0, y: 16 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -176,7 +185,7 @@ export function KnowledgeTimelinePage() {
               {/* Sidebar */}
               <aside style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {/* Top files */}
-                <section style={{ ...CARD, padding: '20px 24px' }}>
+                <section className="tl-side-card" style={{ ...CARD, padding: '20px 24px' }}>
                   <p style={{ ...EYEBROW }}>Top Changed Files</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                     {topFiles.slice(0, 8).map((item: any, i: number) => (
@@ -190,7 +199,7 @@ export function KnowledgeTimelinePage() {
                 </section>
 
                 {/* Contributors */}
-                <section style={{ ...CARD, padding: '20px 24px' }}>
+                <section className="tl-side-card" style={{ ...CARD, padding: '20px 24px' }}>
                   <p style={{ ...EYEBROW }}>Top Contributors</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                     {contributors.slice(0, 8).map((item: any) => (

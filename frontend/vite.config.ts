@@ -14,14 +14,19 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    cssMinify: 'esbuild',
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-motion': ['framer-motion'],
-          'vendor-auth': ['firebase/app', 'firebase/auth'],
-          'vendor-ui': ['lucide-react'],
-          'vendor-http': ['axios']
+        manualChunks: (id: string) => {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router-dom/')) {
+            return 'vendor-react'
+          }
+          if (id.includes('/framer-motion/')) return 'vendor-motion'
+          if (id.includes('/firebase/')) return 'vendor-auth'
+          if (id.includes('/lucide-react/')) return 'vendor-ui'
+          if (id.includes('/axios/')) return 'vendor-http'
+          return undefined
         }
       }
     }

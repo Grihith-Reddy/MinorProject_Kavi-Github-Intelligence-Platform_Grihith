@@ -47,12 +47,18 @@ export function FileDetailPage() {
         @import url('https://fonts.googleapis.com/css2?family=Gabarito:wght@400;500;600;700&family=Archivo:wght@400;500;600;700&display=swap');
         .fd-layout { display: grid; gap: 16px; grid-template-columns: minmax(0,1fr) 300px; align-items: start; }
         @media (max-width: 1024px) { .fd-layout { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) {
+          .fd-hero-card { padding: 24px 18px !important; border-radius: 20px !important; }
+          .fd-main-card { padding: 18px 16px !important; border-radius: 20px !important; }
+          .fd-sidebar-card { padding: 16px !important; border-radius: 20px !important; }
+        }
       `}</style>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Hero header ── */}
         <motion.section
+          className="fd-hero-card"
           style={{ ...CARD, background: '#EAE4DC', border: 'none', padding: '40px 48px' }}
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -84,6 +90,7 @@ export function FileDetailPage() {
 
               {/* Primary intent */}
               <motion.article
+                className="fd-main-card"
                 style={{ ...CARD, background: '#D7CEF0', border: 'none' }}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -97,6 +104,7 @@ export function FileDetailPage() {
 
               {/* All PR references */}
               <motion.article
+                className="fd-main-card"
                 style={CARD}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -129,6 +137,7 @@ export function FileDetailPage() {
             {/* ── Sidebar ── */}
             <aside style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <motion.section
+                className="fd-sidebar-card"
                 style={{ ...CARD, padding: '20px 24px' }}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}

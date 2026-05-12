@@ -19,7 +19,7 @@ export function AppShell({ children }: AppShellProps) {
         style={{
           maxWidth: '1440px',
           margin: '0 auto',
-          padding: '112px 16px 48px',
+          padding: 'clamp(84px, 10vw, 112px) clamp(10px, 2.2vw, 16px) clamp(24px, 4vw, 48px)',
         }}
       >
         {children}

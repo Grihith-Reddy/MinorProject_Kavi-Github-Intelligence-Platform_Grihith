@@ -151,6 +151,7 @@ npm run dev
 | [`docs/architecture.md`](docs/architecture.md) | System design, data model, component boundaries |
 | [`docs/api-contracts.md`](docs/api-contracts.md) | All REST endpoints with request/response shapes |
 | [`docs/workflows.md`](docs/workflows.md) | Ingestion flow, sync jobs, chat query lifecycle |
+| [`docs/deployment.md`](docs/deployment.md) | Production deployment runbook (Render + Vercel + UptimeRobot) |
 | [`docs/public-launch.md`](docs/public-launch.md) | Launch checklist and go-to-market notes |
 
 ---

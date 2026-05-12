@@ -143,6 +143,56 @@ export function GitHubConnectPage() {
 
         .btn-github:hover { transform: translateY(-2px); }
         .btn-github:disabled { opacity: 0.7; cursor: not-allowed; }
+
+        @media (max-width: 900px) {
+          .connect-page-wrapper { padding: 12px; }
+          .connect-card {
+            border-radius: 24px;
+            clip-path: inset(0% round 24px);
+            padding: 24px 16px;
+          }
+          .inner-content {
+            max-width: 560px;
+            padding: 30px 24px;
+          }
+        }
+
+        @media (max-width: 560px) {
+          .connect-page-wrapper { padding: 8px; }
+          .connect-card {
+            border-radius: 18px;
+            clip-path: inset(0% round 18px);
+            padding: 14px 10px;
+          }
+          .hero-cloud {
+            width: 150%;
+            left: -25%;
+            bottom: -8%;
+          }
+          .inner-content {
+            border-radius: 18px;
+            padding: 20px 14px;
+          }
+          .connection-visual {
+            gap: 10px;
+            margin-bottom: 22px;
+          }
+          .visual-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+          }
+          .feature-row {
+            padding: 12px;
+            border-radius: 12px;
+            gap: 10px;
+          }
+          .btn-github {
+            margin-top: 18px;
+            padding: 12px;
+            font-size: 14px;
+          }
+        }
       `}</style>
 
       <div className="connect-page-wrapper">
@@ -167,7 +217,7 @@ export function GitHubConnectPage() {
               </div>
             </div>
 
-            <h1 className="text-center font-archivo" style={{ fontSize: '28px', fontWeight: 700, color: '#181D1F', marginBottom: '8px' }}>
+            <h1 className="text-center font-archivo" style={{ fontSize: 'clamp(22px, 6vw, 28px)', fontWeight: 700, color: '#181D1F', marginBottom: '8px' }}>
               Connect GitHub
             </h1>
             

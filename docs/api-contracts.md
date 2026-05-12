@@ -92,9 +92,35 @@ Returns file detail and related PRs.
 Searches knowledge entries and returns grounded response.
 - Body:
 ```json
-{ "repo_id": "uuid", "query": "Why does auth middleware exist?", "limit": 5 }
+{
+  "repo_id": "uuid",
+  "query": "Why does auth middleware exist?",
+  "limit": 5,
+  "mode": "default",
+  "conversation_id": "optional-conversation-uuid"
+}
 ```
 - Response:
 ```json
-{ "answer": "...", "sources": [ { "entry_id": "...", "files": [] } ] }
+{
+  "answer": "...",
+  "answer_structured": {},
+  "sources": [ { "entry_id": "...", "files": [] } ],
+  "conversation_id": "uuid",
+  "conversation": {
+    "id": "uuid",
+    "repo_id": "uuid",
+    "title": "Conversation title",
+    "status": "active",
+    "message_count": 42,
+    "last_message_at": "2026-04-27T10:18:00Z"
+  },
+  "memory_applied": true
+}
 ```
+
+### GET `/chat/conversations?repo_id={repo_id}`
+Lists persisted chat conversations for the authenticated user and repository.
+
+### GET `/chat/conversations/{conversation_id}`
+Returns conversation metadata and ordered messages.

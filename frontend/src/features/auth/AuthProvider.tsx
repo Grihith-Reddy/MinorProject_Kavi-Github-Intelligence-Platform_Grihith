@@ -1,28 +1,12 @@
-import { createContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { onAuthStateChanged, signInWithPopup, signOut, type User as FirebaseUser } from 'firebase/auth'
 import { useNavigate } from 'react-router-dom'
 
+import type { AuthContextValue, AuthUser } from './AuthContext'
+import { AuthContext } from './AuthContext'
 import { firebaseAuth, googleProvider } from './firebase'
 
 const ACTIVE_REPO_STORAGE_KEY = 'kavi.activeRepoId'
-
-export interface AuthUser {
-  sub: string
-  email?: string | null
-  name?: string | null
-  picture?: string | null
-}
-
-export interface AuthContextValue {
-  isAuthenticated: boolean
-  isLoading: boolean
-  user: AuthUser | null
-  login: (returnTo?: string) => Promise<void>
-  logout: () => Promise<void>
-  getToken: () => Promise<string | undefined>
-}
-
-export const AuthContext = createContext<AuthContextValue | null>(null)
 
 interface AuthProviderProps {
   children: ReactNode

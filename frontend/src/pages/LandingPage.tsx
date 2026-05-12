@@ -497,6 +497,84 @@ export function LandingPage() {
         .k-footer-a:hover { color: rgba(255,255,255,0.7); }
         .k-footer-copy { font-family: 'Archivo', sans-serif; font-size: 16px; color: rgba(255,255,255,0.4); }
 
+        @media (max-width: 1100px) {
+          .k-about-card { min-height: 620px; }
+          .k-about-inner { padding: 56px 30px; }
+          .k-body-xl { font-size: clamp(22px, 3.2vw, 30px); }
+          .k-feat-card { height: auto; min-height: 620px; }
+          .k-feat-text { padding: 36px 30px; }
+          .k-feat-h2 { font-size: clamp(32px, 5vw, 44px); }
+          .k-feat-p { font-size: 18px; }
+          .k-how-card { padding: 44px 34px; gap: 34px; }
+          .k-out-card,
+          .k-testi-card,
+          .k-faq-card { padding: 38px 30px; }
+          .k-trust-header { padding: 38px 30px 26px; }
+          .k-cta-card { padding: 46px 30px; }
+          .k-footer-card { padding: 38px 30px; gap: 36px; }
+          .k-footer-links { gap: 48px; }
+        }
+
+        @media (max-width: 768px) {
+          .k-sec { padding: 0 12px 12px; }
+          .k-hero-center { padding: 0 18px 30px; }
+          .k-hero-eyebrow { font-size: 14px; margin-bottom: 10px; }
+          .k-about-card { min-height: 520px; border-radius: 20px; }
+          .k-about-ghost-card { display: none !important; }
+          .k-about-inner { padding: 32px 20px; gap: 16px; }
+          .k-eyebrow { font-size: 14px; }
+          .k-body-xl { font-size: 20px; line-height: 1.35; }
+          .k-feat-card { min-height: 0; border-radius: 20px; }
+          .k-feat-text { padding: 24px 20px; gap: 12px; }
+          .k-feat-h2 { font-size: clamp(28px, 7.8vw, 38px); }
+          .k-feat-p { font-size: 16px; line-height: 1.45; }
+          .k-token { font-size: 14px; padding: 6px 12px; }
+          .k-how-card { border-radius: 20px; padding: 28px 20px; gap: 24px; }
+          .k-step { gap: 12px; padding: 12px; }
+          .k-step-title { font-size: 15px; }
+          .k-step-body { font-size: 13px; }
+          .k-out-card,
+          .k-trust-card,
+          .k-testi-card,
+          .k-faq-card,
+          .k-cta-card,
+          .k-footer-card { border-radius: 20px; }
+          .k-out-card,
+          .k-testi-card,
+          .k-faq-card { padding: 28px 20px; }
+          .k-out-item { grid-template-columns: 54px 1fr; gap: 10px; padding: 18px 0; }
+          .k-out-tag { grid-column: 2; justify-self: flex-start; margin-top: 2px; }
+          .k-out-num { font-size: 26px; }
+          .k-out-title { font-size: 18px; }
+          .k-out-body { font-size: 14px; }
+          .k-trust-header { padding: 28px 20px 18px; }
+          .k-trust-item { padding: 20px 20px 24px; }
+          .k-trust-title { font-size: 18px; }
+          .k-trust-body { font-size: 14px; }
+          .k-testi-item { min-height: 0; padding: 18px; border-radius: 18px; }
+          .k-testi-q { font-size: 14px; }
+          .k-cta-card { padding: 30px 20px; gap: 18px; }
+          .k-btn-white { width: 100%; padding: 12px 18px; font-size: 15px; }
+          .kfaq-btn { gap: 14px; padding: 16px 14px 16px 16px; }
+          .kfaq-q { font-size: 17px; }
+          .kfaq-a { font-size: 15px; padding: 0 16px 16px; }
+          .k-footer-card { padding: 28px 20px; gap: 24px; }
+          .k-footer-links { gap: 24px; flex-wrap: wrap; }
+          .k-footer-a { font-size: 15px; }
+          .k-footer-copy { font-size: 14px; }
+        }
+
+        @media (max-width: 480px) {
+          .k-header { padding: 8px; }
+          .k-header-inner { padding: 6px 6px 6px 10px; }
+          .k-logo-name { font-size: 16px; }
+          .k-btn-dark { font-size: 13px; padding: 7px 12px; gap: 4px; }
+          .k-hero { padding: 8px; }
+          .k-hero-card.expanded { border-radius: 16px; }
+          .k-hero-h1 { font-size: clamp(34px, 11vw, 52px); line-height: 1.16; }
+          .k-sec-h2 { font-size: clamp(30px, 9vw, 40px); }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
           .word { opacity: 1 !important; transform: none !important; }
@@ -566,6 +644,7 @@ export function LandingPage() {
                 ].map((pr) => (
                   <div
                     key={pr.num}
+                    className="k-about-ghost-card"
                     style={{
                       position: 'absolute',
                       top: pr.top,
